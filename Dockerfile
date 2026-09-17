@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22-bookworm-slim AS deps
+FROM node:20-bullseye-slim AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-bookworm-slim AS builder
+FROM node:20-bullseye-slim AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -19,13 +19,13 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runner
+FROM node:20-bullseye-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Instalar libssl compatível com o binário do Prisma
+# Bullseye ainda tem libssl1.1 nos repositórios padrão
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl1.1 \
     ca-certificates \
