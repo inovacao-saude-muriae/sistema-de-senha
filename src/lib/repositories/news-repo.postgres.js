@@ -1,50 +1,16 @@
-import { writeFile, unlink, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { prisma } from "../prisma-client.js";
-
-const NEWS_DIR = process.env.NEWS_DIR || join(process.cwd(), "public", "news");
-
-/**
- * Create typed error with status
- * @param {number} status
- * @param {string} message
- * @returns {Error & { status: number }}
- */
-function routeError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
-}
-
-/**
- * Validate allowed image types
- * @param {string} type
- * @returns {boolean}
- */
-function isAllowedImageType(type) {
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
-  return allowedTypes.includes(type);
-}
-
-/**
- * Validate file size (max 5MB)
- * @param {number} size
- * @returns {boolean}
- */
-function isValidFileSize(size) {
-  return size <= 5 * 1024 * 1024;
-}
-
-/**
- * Ensure the news image directory exists
- */
-async function ensureNewsDir() {
-  await mkdir(NEWS_DIR, { recursive: true });
-}
+import { routeError, isAllowedImageType, isValidFileSize } from "./utils.js";
+import { NEWS_MAX_ACTIVE } from "../constants.js";
+import {
+  uploadToS3,
+  deleteFromS3,
+  getPublicUrl,
+  extractKeyFromUrl,
+} from "../s3-client.js";
 
 export class NewsRepository {
   /**
-   * Create a news item (upload image to filesystem + save to db)
+   * Create a news item (upload image to S3 + save to db)
    * @param {{ title: string, image: File }} data
    * @returns {Promise<{
    *   success: boolean,
@@ -65,17 +31,19 @@ export class NewsRepository {
       throw routeError(400, "Imagem deve ter no máximo 5 MB.");
     }
 
+    const ext = (image.name.split(".").pop() || "jpg").toLowerCase();
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const buffer = Buffer.from(await image.arrayBuffer());
+
     try {
-      await ensureNewsDir();
+      await uploadToS3(fileName, buffer, image.type);
+    } catch (err) {
+      throw routeError(500, err.message || "Erro ao fazer upload da imagem.");
+    }
 
-      const ext = (image.name.split(".").pop() || "jpg").toLowerCase();
-      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const buffer = Buffer.from(await image.arrayBuffer());
+    const imageUrl = getPublicUrl(fileName);
 
-      await writeFile(join(NEWS_DIR, fileName), buffer);
-
-      const imageUrl = `/news/${fileName}`;
-
+    try {
       const row = await prisma.news.create({
         data: { title, image_url: imageUrl },
         select: { id: true, title: true, image_url: true },
@@ -90,13 +58,15 @@ export class NewsRepository {
         },
       };
     } catch (err) {
+      // Rollback: delete from S3 if DB write fails
+      await deleteFromS3(fileName);
       if (err.status) throw err;
       throw routeError(500, err.message || "Erro ao salvar notícia.");
     }
   }
 
   /**
-   * Delete a news item (soft delete + remove image from filesystem)
+   * Delete a news item (soft delete + remove image from S3)
    * @param {string|number} id
    * @returns {Promise<{ success: boolean }>}
    */
@@ -120,11 +90,9 @@ export class NewsRepository {
         data: { active: false },
       });
 
-      // Best effort: remove image from filesystem
-      if (row.image_url && row.image_url.startsWith("/news/")) {
-        const filePath = join(NEWS_DIR, row.image_url.replace("/news/", ""));
-        await unlink(filePath).catch(() => {});
-      }
+      // Best effort: remove image from S3
+      const key = extractKeyFromUrl(row.image_url);
+      if (key) await deleteFromS3(key);
 
       return { success: true };
     } catch (err) {
@@ -143,7 +111,7 @@ export class NewsRepository {
         where: { active: true },
         select: { id: true, title: true, image_url: true },
         orderBy: { created_at: "desc" },
-        take: 10,
+        take: NEWS_MAX_ACTIVE,
       });
 
       return rows.map((row) => ({

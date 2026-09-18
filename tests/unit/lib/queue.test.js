@@ -18,6 +18,7 @@ import {
   getQueueSnapshot,
   getSessionSnapshot,
   subscribeSession,
+  NO_PASSWORD,
 } from "@/lib/queue";
 
 describe("SECTORS / GUICHES / keys", () => {
@@ -55,8 +56,10 @@ describe("nextQueueNumber", () => {
     expect(nextQueueNumber(1000)).toBe(0);
   });
 
-  it("trata valor ausente como 0", () => {
-    expect(nextQueueNumber()).toBe(1);
+  it("trata valor ausente como 0 (primeira senha = 000)", () => {
+    expect(nextQueueNumber()).toBe(0);
+    expect(nextQueueNumber(null)).toBe(0);
+    expect(nextQueueNumber(undefined)).toBe(0);
   });
 });
 
@@ -75,24 +78,31 @@ describe("formatQueueNumber", () => {
     expect(formatQueueNumber(1000, "normal")).toBe("N1000");
     expect(formatQueueNumber(1000, "preferencial")).toBe("P1000");
   });
+
+  it("retorna '---' para null/undefined (sem senha)", () => {
+    expect(formatQueueNumber(null, "normal")).toBe("N---");
+    expect(formatQueueNumber(null, "preferencial")).toBe("P---");
+    expect(formatQueueNumber(undefined, "normal")).toBe("N---");
+    expect(formatQueueNumber(undefined, "preferencial")).toBe("P---");
+  });
 });
 
 describe("getInitialState", () => {
-  it("retorna estado zerado com historyDate de hoje", () => {
+  it("retorna estado com null (sem senha) e historyDate de hoje", () => {
     const state = getInitialState();
-    expect(state.farmacia.normalCurrent).toBe(0);
-    expect(state.farmacia.priorityCurrent).toBe(0);
+    expect(state.farmacia.normalCurrent).toBeNull();
+    expect(state.farmacia.priorityCurrent).toBeNull();
     expect(state.farmacia.history).toEqual([]);
     expect(state.farmacia.historyDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(state.recepcao.normalCurrent).toBe(0);
+    expect(state.recepcao.normalCurrent).toBeNull();
   });
 });
 
 describe("normalizeQueue", () => {
-  it("preenche defaults quando faltam campos", () => {
+  it("preenche defaults (null = sem senha) quando faltam campos", () => {
     expect(normalizeQueue(undefined)).toEqual({
-      normalCurrent: 0,
-      priorityCurrent: 0,
+      normalCurrent: null,
+      priorityCurrent: null,
       history: [],
       historyDate: expect.any(String),
     });
@@ -101,7 +111,7 @@ describe("normalizeQueue", () => {
   it("suporta o campo legado 'current'", () => {
     const q = normalizeQueue({ current: 12, history: [{ n: 1 }] });
     expect(q.normalCurrent).toBe(12);
-    expect(q.priorityCurrent).toBe(0);
+    expect(q.priorityCurrent).toBeNull();
   });
 });
 
@@ -111,7 +121,7 @@ describe("readQueueState / saveQueueState / clearMonitorHistory", () => {
 
   it("retorna estado inicial quando storage vazio", () => {
     const state = readQueueState();
-    expect(state.farmacia.normalCurrent).toBe(0);
+    expect(state.farmacia.normalCurrent).toBeNull();
     expect(state.farmacia.historyDate).toBe(todayKey);
   });
 

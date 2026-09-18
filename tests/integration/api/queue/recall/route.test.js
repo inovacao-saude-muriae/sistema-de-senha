@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { cleanupQueueTestData } from "../../../postgres-setup.js";
+import { cleanupQueueTestData, seedTestUser, cleanupTestUsers } from "../../../postgres-setup.js";
 import { eventManager } from "@/lib/event-manager";
+
+const MOCK_USER_ID = "c0f4795e-f467-4695-b479-5ef467c695a6";
+const MOCK_USERNAME = "test.attendant.recall";
 
 async function importCallRoute() {
   return import("@/app/api/queue/call/route.js");
@@ -18,10 +21,12 @@ async function importQueueRepo() {
 describe("/api/queue/recall — integration", () => {
   beforeEach(async () => {
     await cleanupQueueTestData();
+    await seedTestUser({ id: MOCK_USER_ID, username: MOCK_USERNAME });
   });
 
   afterEach(async () => {
     await cleanupQueueTestData();
+    await cleanupTestUsers([MOCK_USERNAME]);
   });
 
   describe("POST", () => {
@@ -72,7 +77,7 @@ describe("/api/queue/recall — integration", () => {
 
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.number).toBe(1);
+      expect(body.number).toBe(0);
       expect(body.type).toBe("normal");
     });
 
@@ -103,7 +108,7 @@ describe("/api/queue/recall — integration", () => {
 
         expect(receivedCall).toBeNull();
         expect(receivedRecall).not.toBeNull();
-        expect(receivedRecall.number).toBe(1);
+        expect(receivedRecall.number).toBe(0);
         expect(receivedRecall.type).toBe("normal");
         expect(receivedRecall.time).toBeDefined();
       } finally {
@@ -135,7 +140,7 @@ describe("/api/queue/recall — integration", () => {
       const body = await res.json();
 
       expect(res.status).toBe(200);
-      expect(body.number).toBe(2);
+      expect(body.number).toBe(0);
       expect(body.type).toBe("preferencial");
     });
   });

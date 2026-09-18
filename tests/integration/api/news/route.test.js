@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { seedTestNews, cleanupTestNews, cleanupAllNews } from "../../postgres-setup.js";
-import { unlink, access } from "node:fs/promises";
-import { join } from "node:path";
+import { objectExistsInS3, extractKeyFromUrl, deleteFromS3 } from "@/lib/s3-client.js";
 
-const NEWS_DIR = process.env.NEWS_DIR || join(process.cwd(), "public", "news");
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL;
 
 let createdIds = [];
-let createdFiles = [];
+let createdKeys = [];
 
 async function importRoute() {
   return import("@/app/api/news/route.js");
@@ -22,21 +21,28 @@ function makeImage({ name = "test.jpg", type = "image/jpeg", size = 1024 } = {})
   return new File([data], name, { type });
 }
 
-async function cleanupFiles() {
-  for (const file of createdFiles) {
-    await unlink(join(NEWS_DIR, file)).catch(() => {});
+async function cleanupS3() {
+  const validKeys = createdKeys.filter(Boolean);
+
+  for (const key of validKeys) {
+    await deleteFromS3(key);
   }
-  createdFiles = [];
+
+  createdKeys = [];
+}
+
+function isUrl(str) {
+  return URL.canParse(str);
 }
 
 describe("/api/news — integration", () => {
   beforeEach(() => {
     createdIds = [];
-    createdFiles = [];
+    createdKeys = [];
   });
 
   afterEach(async () => {
-    await cleanupFiles();
+    await cleanupS3();
     await cleanupTestNews(createdIds);
     createdIds = [];
   });
@@ -49,7 +55,7 @@ describe("/api/news — integration", () => {
         image: makeImage({ name: "get-test.jpg" }),
       });
       createdIds.push(Number(result.news.id));
-      createdFiles.push(result.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(result.news.image));
 
       const { GET } = await importRoute();
       const res = await GET();
@@ -57,10 +63,13 @@ describe("/api/news — integration", () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(body.news)).toBe(true);
+
       const found = body.news.find((n) => n.id === result.news.id);
+
       expect(found).toBeDefined();
       expect(found.title).toBe("Notícia GET Teste");
-      expect(found.image).toMatch(/^\/news\//);
+      expect(isUrl(found.image)).toBe(true);
+      expect(found.image).toMatch(`${S3_PUBLIC_URL}/`);
     });
 
     it("não retorna notícias inativas", async () => {
@@ -70,7 +79,7 @@ describe("/api/news — integration", () => {
         image: makeImage({ name: "inativa-test.jpg" }),
       });
       createdIds.push(Number(result.news.id));
-      createdFiles.push(result.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(result.news.image));
 
       await repo.remove(result.news.id);
 
@@ -179,10 +188,10 @@ describe("/api/news — integration", () => {
       expect(body.success).toBe(true);
       expect(body.news.title).toBe("Minha Notícias");
       expect(body.news.id).toBeDefined();
-      expect(body.news.image).toMatch(/^\/news\//);
+      expect(body.news.image).toMatch(new RegExp(`^${S3_PUBLIC_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`));
 
       createdIds.push(Number(body.news.id));
-      createdFiles.push(body.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(body.news.image));
 
       const repo = await importNewsRepo();
       const list = await repo.listActive();
@@ -191,7 +200,7 @@ describe("/api/news — integration", () => {
       expect(found.title).toBe("Minha Notícias");
     });
 
-    it("salva a imagem no filesystem", async () => {
+    it("salva a imagem no S3", async () => {
       const form = new FormData();
       form.append("title", "Com Imagem");
       form.append("image", makeImage({ name: "foto.png", type: "image/png" }));
@@ -204,12 +213,13 @@ describe("/api/news — integration", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
 
-      createdIds.push(Number(body.news.id));
-      createdFiles.push(body.news.image.replace("/news/", ""));
+      const key = extractKeyFromUrl(body.news.image);
 
-      await expect(
-        access(join(NEWS_DIR, body.news.image.replace("/news/", "")))
-      ).resolves.toBeUndefined();
+      createdIds.push(Number(body.news.id));
+      if (key) createdKeys.push(key);
+
+      expect(isUrl(body.news.image)).toBe(true);
+      expect(await objectExistsInS3(key)).toBe(true);
     });
 
     it("faz trim no título", async () => {
@@ -227,7 +237,7 @@ describe("/api/news — integration", () => {
       expect(body.news.title).toBe("Com Espaços");
 
       createdIds.push(Number(body.news.id));
-      createdFiles.push(body.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(body.news.image));
     });
   });
 
@@ -253,7 +263,7 @@ describe("/api/news — integration", () => {
         image: makeImage({ name: "to-delete.jpg" }),
       });
       createdIds.push(Number(result.news.id));
-      createdFiles.push(result.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(result.news.image));
 
       const { DELETE } = await importRoute();
       const res = await DELETE(
@@ -269,14 +279,17 @@ describe("/api/news — integration", () => {
       expect(found).toBeUndefined();
     });
 
-    it("remove a imagem do filesystem ao deletar", async () => {
+    it("remove a imagem do S3 ao deletar", async () => {
       const repo = await importNewsRepo();
+
       const result = await repo.create({
         title: "Com Imagem",
         image: makeImage({ name: "to-delete-img.jpg" }),
       });
+
       createdIds.push(Number(result.news.id));
-      const fileName = result.news.image.replace("/news/", "");
+      const key = extractKeyFromUrl(result.news.image);
+      createdKeys.push(key);
 
       const { DELETE } = await importRoute();
       const res = await DELETE(
@@ -284,8 +297,7 @@ describe("/api/news — integration", () => {
       );
 
       expect(res.status).toBe(200);
-
-      await expect(access(join(NEWS_DIR, fileName))).rejects.toThrow();
+      expect(await objectExistsInS3(key)).toBe(false);
     });
 
     it("retorna 404 quando notícia não existe", async () => {
@@ -300,7 +312,6 @@ describe("/api/news — integration", () => {
 
   describe("fluxo completo", () => {
     it("cria, lista e deleta notícia", async () => {
-      // 1. Criar
       const form = new FormData();
       form.append("title", "Fluxo Completo");
       form.append("image", makeImage({ name: "fluxo.jpg", type: "image/jpeg" }));
@@ -313,9 +324,8 @@ describe("/api/news — integration", () => {
       const postData = await postRes.json();
       const newsId = postData.news.id;
       createdIds.push(Number(newsId));
-      createdFiles.push(postData.news.image.replace("/news/", ""));
+      createdKeys.push(extractKeyFromUrl(postData.news.image));
 
-      // 2. Listar e verificar que aparece
       const { GET } = await importRoute();
       const getRes = await GET();
       const getData = await getRes.json();
@@ -323,20 +333,17 @@ describe("/api/news — integration", () => {
       expect(found).toBeDefined();
       expect(found.title).toBe("Fluxo Completo");
 
-      // 3. Deletar
       const { DELETE } = await importRoute();
       const delRes = await DELETE(
         new Request(`http://localhost/api/news?id=${newsId}`)
       );
       expect(delRes.status).toBe(200);
 
-      // 4. Verificar que não aparece mais na listagem
       const getRes2 = await GET();
       const getData2 = await getRes2.json();
       const notFound = getData2.news.find((n) => n.id === newsId);
       expect(notFound).toBeUndefined();
 
-      // 5. Verificar inatividade via repositório
       const repo = await importNewsRepo();
       const list = await repo.listActive();
       const stillActive = list.find((n) => n.id === newsId);

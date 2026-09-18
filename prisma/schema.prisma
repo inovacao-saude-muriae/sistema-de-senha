@@ -34,7 +34,6 @@ model users {
   created_at    DateTime  @default(now()) @db.Timestamptz(6)
 
   sectors     sectors?      @relation(fields: [sector_id], references: [id])
-  settings    settings?
   queue_calls queue_calls[]
 }
 
@@ -45,26 +44,10 @@ model sectors {
   name           String
   created_at     DateTime?       @default(now()) @db.Timestamptz(6)
   users          users[]
-  queue          queues?
   queue_calls    queue_calls[]
-  queue_counters queue_counters?
 }
 
 // ── Filas ──────────────────────────────────────────────────────
-
-model queues {
-  sector_id      String    @id
-  current_number Int       @default(0)
-  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
-  sectors        sectors   @relation(fields: [sector_id], references: [id])
-}
-
-model queue_counters {
-  sector_id      String    @id
-  current_number Int?      @default(0)
-  updated_at     DateTime? @default(now()) @db.Timestamptz(6)
-  sectors        sectors   @relation(fields: [sector_id], references: [id])
-}
 
 model queue_sequences {
   sector_id    String
@@ -88,15 +71,6 @@ model queue_calls {
 
   sectors sectors @relation(fields: [sector_id], references: [id])
   users   users?  @relation(fields: [called_by], references: [id])
-}
-
-// ── Configurações do usuário ───────────────────────────────────
-
-model settings {
-  user_id       String  @id @db.Uuid
-  sound_enabled Boolean @default(true)
-
-  users users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
 
 // ── Notícias ───────────────────────────────────────────────────

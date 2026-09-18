@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { cleanupQueueTestData } from "../../../postgres-setup.js";
+import { cleanupQueueTestData, seedTestUser, cleanupTestUsers } from "../../../postgres-setup.js";
 import { eventManager } from "@/lib/event-manager";
+
+const MOCK_USER_ID = "c0f4795e-f467-4695-b479-5ef467c695a6";
+const MOCK_USERNAME = "test.attendant.call";
 
 async function importRoute() {
   return import("@/app/api/queue/call/route.js");
@@ -14,10 +17,12 @@ async function importQueueRepo() {
 describe("/api/queue/call — integration", () => {
   beforeEach(async () => {
     await cleanupQueueTestData();
+    await seedTestUser({ id: MOCK_USER_ID, username: MOCK_USERNAME });
   });
 
   afterEach(async () => {
     await cleanupQueueTestData();
+    await cleanupTestUsers([MOCK_USERNAME]);
   });
 
   describe("POST", () => {
@@ -52,14 +57,14 @@ describe("/api/queue/call — integration", () => {
 
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.number).toBe(1);
-      expect(body.numberStr).toBe("N001");
+      expect(body.number).toBe(0);
+      expect(body.numberStr).toBe("N000");
       expect(body.type).toBe("normal");
 
       const repo = await importQueueRepo();
       const calls = await repo.getRecentCalls("farmacia");
       expect(calls.length).toBe(1);
-      expect(calls[0].number).toBe(1);
+      expect(calls[0].number).toBe(0);
       expect(calls[0].type).toBe("normal");
     });
 
@@ -74,7 +79,7 @@ describe("/api/queue/call — integration", () => {
 
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(body.number).toBe(1);
+      expect(body.number).toBe(0);
       expect(body.type).toBe("preferencial");
 
       const repo = await importQueueRepo();
@@ -86,7 +91,7 @@ describe("/api/queue/call — integration", () => {
     it("retorna próximo número sequencial", async () => {
       const { POST } = await importRoute();
 
-      for (let i = 1; i <= 3; i++) {
+      for (let i = 0; i < 3; i++) {
         const req = {
           json: () =>
             Promise.resolve({ sector: "farmacia", type: "normal", attendantId: null }),
@@ -126,7 +131,7 @@ describe("/api/queue/call — integration", () => {
         await POST(req);
 
         expect(receivedEvent).not.toBeNull();
-        expect(receivedEvent.number).toBe(1);
+        expect(receivedEvent.number).toBe(0);
         expect(receivedEvent.type).toBe("normal");
         expect(receivedEvent.time).toBeDefined();
       } finally {
@@ -136,7 +141,7 @@ describe("/api/queue/call — integration", () => {
   });
 
   describe("fluxo completo", () => {
-    it("chamar 3 vezes → verificar sequência 1, 2, 3", async () => {
+    it("chamar 3 vezes → verificar sequência 0, 1, 2", async () => {
       const { POST } = await importRoute();
 
       const results = [];
@@ -150,14 +155,14 @@ describe("/api/queue/call — integration", () => {
         results.push(body);
       }
 
-      expect(results[0].number).toBe(1);
-      expect(results[1].number).toBe(2);
-      expect(results[2].number).toBe(3);
+      expect(results[0].number).toBe(0);
+      expect(results[1].number).toBe(1);
+      expect(results[2].number).toBe(2);
 
       const repo = await importQueueRepo();
       const calls = await repo.getRecentCalls("farmacia");
       expect(calls).toHaveLength(3);
-      expect(calls.map((c) => c.number)).toEqual([3, 2, 1]);
+      expect(calls.map((c) => c.number)).toEqual([2, 1, 0]);
     });
   });
 });

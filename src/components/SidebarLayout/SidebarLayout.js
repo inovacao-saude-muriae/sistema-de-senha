@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import {
@@ -13,7 +13,8 @@ import {
   Monitor,
   Settings2,
 } from "lucide-react";
-import { SECTORS, SESSION_KEY } from "../../lib/queue";
+import { SECTORS, SESSION_KEY } from "../../lib/constants.js";
+import { useServerClock } from "../../lib/hooks/useServerClock.js";
 import styles from "./SidebarLayout.module.css";
 
 export { styles as sidebarStyles };
@@ -35,21 +36,11 @@ export function SidebarLayout({
   headerActions,
   children,
 }) {
-  const [time, setTime] = useState("");
+  const { timeString } = useServerClock();
   const [monitorsOpen, setMonitorsOpen] = useState(false);
   const visibleNavItems = NAV_ITEMS.filter(
     (item) => !item.onlyAdmin || session?.role === "admin"
   );
-
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setTime(new Intl.DateTimeFormat("pt-BR", {
-        hour: "2-digit", minute: "2-digit", second: "2-digit",
-      }).format(new Date())),
-      1000
-    );
-    return () => window.clearInterval(timer);
-  }, []);
 
   return (
     <main className={styles.shell}>
@@ -127,7 +118,7 @@ export function SidebarLayout({
             </div>
             {headerActions}
             <div className={styles.headerTime}>
-              <Clock3 size={16} /> {time || "--:--:--"}
+              <Clock3 size={16} /> {timeString || "--:--:--"}
             </div>
           </div>
         </header>

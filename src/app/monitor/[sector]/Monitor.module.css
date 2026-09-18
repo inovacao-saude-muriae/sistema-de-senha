@@ -343,6 +343,12 @@
   color: #173b51;
 }
 
+/* ── Estado "sem senha" no destaque ── */
+.noPassword {
+  color: #b0bec5 !important;
+  letter-spacing: 8px;
+}
+
 /* RESPONSIVIDADE PARA DISPOSITIVOS MÓVEIS */
 @media (max-width: 900px) {
   .monitor {

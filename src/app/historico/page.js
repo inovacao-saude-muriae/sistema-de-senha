@@ -9,13 +9,13 @@ import {
   formatQueueNumber,
   getServerSessionSnapshot,
   getSessionSnapshot,
-  SECTORS,
   subscribeSession,
 } from "../../lib/queue";
+import { SECTORS, ROLES, CALL_TYPES, PAGE_SIZES, DEFAULT_SECTOR } from "../../lib/constants.js";
 import { SidebarLayout, sidebarStyles } from "../../components/SidebarLayout/SidebarLayout";
 import styles from "./Historico.module.css";
 
-const ITEMS_PER_PAGE = 20;
+const ITEMS_PER_PAGE = PAGE_SIZES.historico;
 
 const emptySubscribe = () => () => {};
 function useIsClient() {
@@ -32,7 +32,7 @@ export default function HistoricoPage() {
     getServerSessionSnapshot
   );
 
-  const [activeSector, setActiveSector] = useState("farmacia");
+  const [activeSector, setActiveSector] = useState(DEFAULT_SECTOR);
   const [filterDays, setFilterDays] = useState("30");
   const [filterType, setFilterType] = useState("");
   const [stats, setStats]           = useState(null);
@@ -45,7 +45,7 @@ export default function HistoricoPage() {
   }, [router]);
 
   useEffect(() => {
-    if (session?.role !== "admin" && session?.sector) {
+    if (session?.role !== ROLES.ADMIN && session?.sector) {
       setActiveSector(session.sector);
     }
   }, [session?.role, session?.sector]);
@@ -91,7 +91,7 @@ export default function HistoricoPage() {
       subtitle="Consulte todas as chamadas de senhas realizadas."
       headerActions={
         <>
-          {session?.role === "admin" && (
+          {session?.role === ROLES.ADMIN && (
             <select
               className={sidebarStyles.sectorSelect}
               value={activeSector}
@@ -191,8 +191,8 @@ export default function HistoricoPage() {
                   key={`${item.id || item.number}-${index}`}
                 >
                   <strong>{formatQueueNumber(item.number, item.type)}</strong>
-                  <span className={item.type === "preferencial" ? styles.priorityTag : styles.normalTag}>
-                    {item.type === "preferencial" ? "Preferencial" : "Normal"}
+                  <span className={item.type === CALL_TYPES.PREFERENCIAL ? styles.priorityTag : styles.normalTag}>
+                    {item.type === CALL_TYPES.PREFERENCIAL ? "Preferencial" : "Normal"}
                   </span>
                   <span>{item.time}</span>
                   <span className={styles.sectorTag}>

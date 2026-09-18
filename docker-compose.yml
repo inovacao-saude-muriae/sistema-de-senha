@@ -11,5 +11,23 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
 
+  garage:
+    image: dxflrs/garage:v2.4.1
+    restart: unless-stopped
+    ports:
+      - "3900:3900"
+      - "3902:3902"
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET:-news-images}
+    command: /garage server --single-node --default-bucket
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+
 volumes:
   pgdata:
+  garage-meta:
+  garage-data:

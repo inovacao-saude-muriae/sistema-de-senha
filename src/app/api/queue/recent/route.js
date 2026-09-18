@@ -1,4 +1,5 @@
 import { queue } from "@/lib/repositories";
+import { SECTORS, DEFAULT_RECENT_LIMIT } from "@/lib/constants.js";
 
 /**
  * GET /api/queue/recent?sector=farmacia&limit=30
@@ -8,11 +9,11 @@ import { queue } from "@/lib/repositories";
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sector = searchParams.get("sector");
-  const limit = parseInt(searchParams.get("limit") || "30", 10);
+  const limit = parseInt(searchParams.get("limit") || String(DEFAULT_RECENT_LIMIT), 10);
 
-  if (!sector || !["farmacia", "recepcao"].includes(sector)) {
+  if (!sector || !Object.hasOwn(SECTORS, sector)) {
     return Response.json(
-      { error: "Invalid sector. Use 'farmacia' or 'recepcao'." },
+      { error: "Invalid sector." },
       { status: 400 },
     );
   }

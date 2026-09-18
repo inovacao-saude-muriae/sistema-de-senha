@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { read } from "@/lib/repositories";
+import { MIN_DAYS, MAX_DAYS, DEFAULT_DAYS } from "@/lib/constants.js";
 
 /* ─────────────────────────────────────────────────
    GET — retorna estatísticas e histórico
@@ -11,7 +12,7 @@ import { read } from "@/lib/repositories";
 ───────────────────────────────────────────────── */
 export async function GET(request) {
   const url = new URL(request.url);
-  const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 30));
+  const days = Math.min(MAX_DAYS, Math.max(MIN_DAYS, Number(url.searchParams.get("days")) || DEFAULT_DAYS));
   const sector = url.searchParams.get("sector") || null;
   const from = url.searchParams.get("from") || null;
   const to = url.searchParams.get("to") || null;

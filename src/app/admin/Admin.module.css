@@ -778,3 +778,82 @@
   text-align: center;
   padding: 24px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   SEÇÃO DE SINCRONIZAÇÃO DE SENHAS
+═══════════════════════════════════════════════════════════ */
+
+.syncInfo {
+  font-size: 13px;
+  color: #5a7a8a;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.syncForm {
+  margin-top: 16px;
+}
+
+.syncRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.syncRow label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #416477;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.syncRow select,
+.syncRow input {
+  width: 100%;
+  border: 1.5px solid #cddde5;
+  border-radius: 8px;
+  padding: 11px 13px;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+.syncRow select:focus,
+.syncRow input:focus {
+  border-color: #1678a0;
+}
+
+.syncButton {
+  background: #1678a0;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 13px 24px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.syncButton:hover:not(:disabled) {
+  background: #1389b8;
+}
+
+.syncButton:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+@media (max-width: 700px) {
+  .syncRow {
+    grid-template-columns: 1fr;
+  }
+}

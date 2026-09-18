@@ -4,6 +4,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   memo,
@@ -14,10 +15,14 @@ import {
   getQueueSnapshot,
   normalizeQueue,
   saveQueueState,
-  SECTORS,
   subscribeQueue,
 } from "../../../lib/queue";
+import {
+  SECTORS, DEFAULT_SECTOR, CALL_TYPES, TYPE_FIELDS, NEWS_CAROUSEL_INTERVAL, HISTORY_LIMITS,
+  NO_PASSWORD
+} from "../../../lib/constants.js";
 import { useQueueEvents } from "../../../lib/hooks/useQueueEvents";
+import { useServerClock } from "../../../lib/hooks/useServerClock.js";
 import {
   forceAnnounce,
   monitorSpeak,
@@ -30,10 +35,9 @@ import styles from "./Monitor.module.css";
 /* ─── notícias ─── */
 let newsSnapshot = [];
 const serverNewsSnapshot = [];
-const monitorServerSnapshot = {
-  farmacia: { normalCurrent: 0, priorityCurrent: 0, history: [] },
-  recepcao: { normalCurrent: 0, priorityCurrent: 0, history: [] },
-};
+const monitorServerSnapshot = Object.fromEntries(
+  Object.keys(SECTORS).map((key) => [key, { normalCurrent: NO_PASSWORD, priorityCurrent: NO_PASSWORD, history: [] }]),
+);
 let lastSpokenCallId = null;
 
 function getNewsSnapshot() {
@@ -50,14 +54,15 @@ function subscribeNews(cb) {
 }
 
 function formatMonitorNumber(number) {
-  return String(Number(number) || 0).padStart(3, "0");
+  if (number === null || number === undefined) return "---";
+  return String(Number(number)).padStart(3, "0");
 }
 
 function cleanHistory(history = []) {
   if (!Array.isArray(history)) return [];
   const seen = new Set();
   return history.filter((item) => {
-    if (!item?.number) return false;
+    if (item?.number == null) return false;
     // Deduplica por número+tipo (ignora id pois itens locais não têm id ainda)
     const key = `${item.number}-${item.type}`;
     if (seen.has(key)) return false;
@@ -90,7 +95,7 @@ const NewsCarousel = memo(function NewsCarousel() {
     if (!news?.length) return;
     const t = setInterval(
       () => setNewsIndex((p) => (p + 1) % news.length),
-      5000,
+      NEWS_CAROUSEL_INTERVAL,
     );
     return () => clearInterval(t);
   }, [news]);
@@ -137,7 +142,7 @@ const NewsCarousel = memo(function NewsCarousel() {
 ══════════════════════════════════════════════ */
 export default function MonitorPage({ params }) {
   const resolvedParams = params ? (params.then ? use(params) : params) : {};
-  const sector = resolvedParams?.sector || "farmacia";
+  const sector = resolvedParams?.sector || DEFAULT_SECTOR;
 
   const state = useSyncExternalStore(
     subscribeQueue,
@@ -148,23 +153,9 @@ export default function MonitorPage({ params }) {
   // Realtime events via SSE with polling fallback
   const { connected, lastCall } = useQueueEvents(sector);
 
-  const [time, setTime] = useState("");
+  const { timeString, dateString } = useServerClock();
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [calling, setCalling] = useState(false);
-
-  /* relógio */
-  useEffect(() => {
-    const t = setInterval(() => {
-      setTime(
-        new Intl.DateTimeFormat("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }).format(new Date()),
-      );
-    }, 1000);
-    return () => clearInterval(t);
-  }, []);
 
   /* desbloqueia áudio no primeiro clique/tecla */
   useEffect(() => {
@@ -200,8 +191,15 @@ export default function MonitorPage({ params }) {
 
     const prev = getQueueSnapshot() || monitorServerSnapshot;
     const queue = prev[sector] || {};
-    const callType = lastCall.type === "preferencial" ? "preferencial" : "normal";
-    const field = callType === "preferencial" ? "priorityCurrent" : "normalCurrent";
+
+    // Skip stale initial fetch when queue is in "no password" state (post-reset).
+    // Initial calls from the API are old DB rows that were not cleared on reset.
+    if (lastCall._source === "initial" && queue.normalCurrent === NO_PASSWORD && queue.priorityCurrent === NO_PASSWORD) {
+      return;
+    }
+
+    const callType = lastCall.type === CALL_TYPES.PREFERENCIAL ? CALL_TYPES.PREFERENCIAL : CALL_TYPES.NORMAL;
+    const field = callType === CALL_TYPES.PREFERENCIAL ? TYPE_FIELDS.preferencial : TYPE_FIELDS.normal;
 
     const currentHistory = queue.history || [];
     const newEntry = {
@@ -216,12 +214,12 @@ export default function MonitorPage({ params }) {
       [sector]: {
         ...queue,
         [field]: lastCall.number,
-        history: cleanHistory([newEntry, ...currentHistory]).slice(0, 30),
+        history: cleanHistory([newEntry, ...currentHistory]).slice(0, HISTORY_LIMITS.monitor),
       },
     });
 
     monitorSpeak(lastCall.number, callType);
-  }, [lastCall, sector]);
+  }, [lastCall, sector, audioEnabled]);
 
   /* ─── chamar próxima senha (via teclado / passador) ─── */
   const callNext = useCallback(async (type) => {
@@ -254,10 +252,10 @@ export default function MonitorPage({ params }) {
       const k = e.key;
       if (["ArrowRight", "PageDown", "Enter", " "].includes(k)) {
         e.preventDefault();
-        callNext("normal");
+        callNext(CALL_TYPES.NORMAL);
       } else if (["ArrowLeft", "PageUp"].includes(k)) {
         e.preventDefault();
-        callNext("preferencial");
+        callNext(CALL_TYPES.PREFERENCIAL);
       } else if (["ArrowUp", "Home"].includes(k)) {
         e.preventDefault();
         reCall();
@@ -274,10 +272,10 @@ export default function MonitorPage({ params }) {
       if (e.target.closest("a, button, input, select, textarea")) return;
       if (e.button === 0) {
         e.preventDefault();
-        callNext("normal");
+        callNext(CALL_TYPES.NORMAL);
       } else if (e.button === 2) {
         e.preventDefault();
-        callNext("preferencial");
+        callNext(CALL_TYPES.PREFERENCIAL);
       }
     }
     function onWheel(e) {
@@ -302,12 +300,13 @@ export default function MonitorPage({ params }) {
   }, [callNext, reCall]);
 
   /* ─── render ─── */
-  const info = SECTORS[sector] || SECTORS.farmacia;
+  const info = SECTORS[sector] || SECTORS[DEFAULT_SECTOR];
   const current = state[sector] || monitorServerSnapshot[sector];
   const validHistory = cleanHistory(current.history || []);
-  const latest = validHistory[0] || { number: current.normalCurrent || 0, type: "normal" };
+  const latest = validHistory[0] || { number: current.normalCurrent ?? NO_PASSWORD, type: CALL_TYPES.NORMAL };
   const recentCalls = validHistory.slice(1, 5);
-  const isPriority = latest.type === "preferencial";
+  const isPriority = latest.type === CALL_TYPES.PREFERENCIAL;
+  const hasNoPassword = latest.number === null || latest.number === undefined;
 
   return (
     <main className={styles.monitor}>
@@ -319,17 +318,10 @@ export default function MonitorPage({ params }) {
         <div className={styles.headerMeta}>
           <div className={styles.clock}>
             <Clock3 size={18} />
-            {time}
+            {timeString}
           </div>
           <div className={styles.date}>
-            {new Intl.DateTimeFormat("pt-BR", {
-              weekday: "long",
-              day: "2-digit",
-              month: "long",
-              year: "numeric",
-            })
-              .format(new Date())
-              .toUpperCase()}
+            {dateString}
           </div>
         </div>
       </header>
@@ -340,15 +332,19 @@ export default function MonitorPage({ params }) {
             className={`${styles.featured} ${isPriority ? styles.featuredPriority : ""}`}
           >
             <p>SENHA</p>
-            <strong>{formatMonitorNumber(latest?.number || 0)}</strong>
-            {isPriority ? (
+            <strong className={hasNoPassword ? styles.noPassword : ""}>
+              {formatMonitorNumber(latest?.number ?? NO_PASSWORD)}
+            </strong>
+            {hasNoPassword ? (
+              <span>NENHUMA SENHA CHAMADA</span>
+            ) : isPriority ? (
               <span className={styles.priorityTag}>
                 ATENDIMENTO PREFERENCIAL
               </span>
             ) : (
               <span>ATENDIMENTO</span>
             )}
-            <small>Dirija-se ao balcão de atendimento</small>
+            <small>{hasNoPassword ? "Aguardando primeiras chamadas" : "Dirija-se ao balcão de atendimento"}</small>
           </section>
 
           <section className={styles.recent}>
@@ -361,12 +357,12 @@ export default function MonitorPage({ params }) {
                 >
                   <strong
                     className={
-                      item.type === "preferencial"
+                      item.type === CALL_TYPES.PREFERENCIAL
                         ? styles.priorityNumber
                         : styles.normalNumber
                     }
                   >
-                    {formatMonitorNumber(item?.number || 0)}
+                    {formatMonitorNumber(item?.number ?? NO_PASSWORD)}
                   </strong>
                   {item.type === "preferencial" ? (
                     <span className={styles.priorityTagSmall}>
@@ -380,7 +376,7 @@ export default function MonitorPage({ params }) {
               ))
             ) : (
               <p style={{ fontSize: "14px", color: "#888", marginTop: "12px" }}>
-                Aguardando chamadas anteriores...
+                Nenhuma senha chamada ainda neste setor.
               </p>
             )}
           </section>

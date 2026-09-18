@@ -19,16 +19,16 @@ import {
   normalizeQueue,
   readQueueState,
   saveQueueState,
-  SECTORS,
   subscribeQueue,
   subscribeSession,
 } from "../../lib/queue";
+import { SECTORS, ROLES, CALL_TYPES, TYPE_FIELDS, TYPE_LABELS, HISTORY_LIMITS, PAGE_SIZES, DEFAULT_SECTOR, DEFAULT_NAME, KEYBOARD_SHORTCUTS, API_ROUTES } from "../../lib/constants.js";
 import { useQueueEvents } from "../../lib/hooks/useQueueEvents";
 import { SidebarLayout, sidebarStyles } from "../../components/SidebarLayout/SidebarLayout";
 import styles from "./Painel.module.css";
 
-const HISTORY_LIMIT = 100;
-const ITEMS_PER_PAGE = 10;
+const HISTORY_LIMIT = HISTORY_LIMITS.painel;
+const ITEMS_PER_PAGE = PAGE_SIZES.painel;
 
 const emptySubscribe = () => () => {};
 function useIsClient() {
@@ -52,12 +52,12 @@ export default function PainelPage() {
 
   const [notice, setNotice]       = useState("Pronto para o próximo atendimento");
   const [calling, setCalling]     = useState(false);
-  const [activeSector, setActiveSector] = useState("farmacia");
+  const [activeSector, setActiveSector] = useState(DEFAULT_SECTOR);
   const [historyPage, setHistoryPage] = useState(1);
 
 
   useEffect(() => {
-    if (session?.role !== "admin" && session?.sector) {
+    if (session?.role !== ROLES.ADMIN && session?.sector) {
       setActiveSector(session.sector);
     }
   }, [session?.role, session?.sector]);
@@ -77,7 +77,7 @@ export default function PainelPage() {
 
   useEffect(() => {
     if (!activeSector) return;
-    fetch(`/api/queue/recent?sector=${activeSector}&limit=${HISTORY_LIMIT}`)
+    fetch(`${API_ROUTES.QUEUE_RECENT}?sector=${activeSector}&limit=${HISTORY_LIMIT}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data?.calls?.length) return;
@@ -85,17 +85,17 @@ export default function PainelPage() {
         const latest = normalizeQueue(latestState[activeSector]);
         const calls = data.calls.map((c) => ({
           number: c.number,
-          type: c.type === "preferencial" || c.type === "preferential"
-            ? "preferencial" : "normal",
+          type: c.type === CALL_TYPES.PREFERENCIAL || c.type === CALL_TYPES.PREFERENTIAL
+            ? CALL_TYPES.PREFERENCIAL : CALL_TYPES.NORMAL,
           time: c.time,
         }));
-        const field = calls[0]?.type === "preferencial"
-          ? "priorityCurrent" : "normalCurrent";
+        const field = calls[0]?.type === CALL_TYPES.PREFERENCIAL
+          ? TYPE_FIELDS.preferencial : TYPE_FIELDS.normal;
         saveQueueState({
           ...latestState,
           [activeSector]: {
             ...latest,
-            [field]: calls[0]?.number || latest[field],
+            [field]: calls[0]?.number ?? latest[field],
             history: calls.slice(0, HISTORY_LIMIT),
           },
         });
@@ -111,8 +111,8 @@ export default function PainelPage() {
 
     const latestState = readQueueState();
     const latest = normalizeQueue(latestState[activeSector]);
-    const callType = lastCall.type === "preferencial" ? "preferencial" : "normal";
-    const field = callType === "preferencial" ? "priorityCurrent" : "normalCurrent";
+    const callType = lastCall.type === CALL_TYPES.PREFERENCIAL ? CALL_TYPES.PREFERENCIAL : CALL_TYPES.NORMAL;
+    const field = callType === CALL_TYPES.PREFERENCIAL ? TYPE_FIELDS.preferencial : TYPE_FIELDS.normal;
 
     if (
       latest.history.length > 0 &&
@@ -140,7 +140,7 @@ export default function PainelPage() {
     const result = await callNextNumber({ sector: activeSector, type });
 
     if (result.ok) {
-      setNotice(type === "preferencial" ? "Senha preferencial chamada" : "Senha normal chamada");
+      setNotice(type === CALL_TYPES.PREFERENCIAL ? "Senha preferencial chamada" : "Senha normal chamada");
     } else {
       setNotice(result.error);
     }
@@ -153,7 +153,7 @@ export default function PainelPage() {
     if (!lastItem) { setNotice("Nenhuma senha anterior para chamar."); return; }
     setNotice("Repetindo chamada...");
     try {
-      await fetch("/api/queue/recall", {
+      await fetch(API_ROUTES.QUEUE_RECALL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sector: activeSector }),
@@ -166,10 +166,10 @@ export default function PainelPage() {
 
   useEffect(() => {
     function handleKeyDown(event) {
-      if (["INPUT","SELECT","TEXTAREA","BUTTON"].includes(event.target.tagName)) return;
+      if (KEYBOARD_SHORTCUTS.INPUT_TAGS.includes(event.target.tagName)) return;
       const key          = event.key.toLowerCase();
-      const normalCall   = ["arrowright","pagedown"," "].includes(key);
-      const priorityCall = ["arrowleft","pageup"].includes(key);
+      const normalCall   = KEYBOARD_SHORTCUTS.NORMAL_CALL.map(k => k.toLowerCase()).includes(key);
+      const priorityCall = KEYBOARD_SHORTCUTS.PRIORITY_CALL.map(k => k.toLowerCase()).includes(key);
       const recallCall   = ["b",".",  "f5","escape"].includes(key);
       if (recallCall)   { event.preventDefault(); reCall(); return; }
       if (!normalCall && !priorityCall) return;
@@ -188,11 +188,11 @@ export default function PainelPage() {
       session={session}
       sectorInfo={sectorInfo}
       eyebrow="PAINEL DE ATENDIMENTO"
-      title={`Olá, ${session?.name || "Atendente"}`}
+      title={`Olá, ${session?.name || DEFAULT_NAME}`}
       subtitle="Controle as chamadas da sua unidade em tempo real."
       headerActions={
         <>
-          {session?.role === "admin" && (
+          {session?.role === ROLES.ADMIN && (
             <select
               className={sidebarStyles.sectorSelect}
               value={activeSector}
@@ -226,10 +226,10 @@ export default function PainelPage() {
           <div className={styles.queueNumber}>
             {current.history[0]
               ? formatQueueNumber(current.history[0].number, current.history[0].type)
-              : "N000"}
+              : formatQueueNumber(null, "normal")}
           </div>
           <p className={styles.callType}>
-            {current.history[0]?.type === "preferencial"
+            {current.history[0]?.type === CALL_TYPES.PREFERENCIAL
               ? "ATENDIMENTO PREFERENCIAL" : "ATENDIMENTO NORMAL"}
           </p>
           <div className={styles.notice}>
@@ -248,7 +248,7 @@ export default function PainelPage() {
           <button
             className={styles.normalButton}
             disabled={calling}
-            onClick={() => callNext("normal")}
+            onClick={() => callNext(CALL_TYPES.NORMAL)}
           >
             <span><Bell size={22} /> {calling ? "CHAMANDO..." : "CHAMAR NORMAL"}</span>
             <small>
@@ -259,7 +259,7 @@ export default function PainelPage() {
           <button
             className={styles.priorityButton}
             disabled={calling}
-            onClick={() => callNext("preferencial")}
+            onClick={() => callNext(CALL_TYPES.PREFERENCIAL)}
           >
             <span><Bell size={22} /> {calling ? "CHAMANDO..." : "CHAMAR PREFERENCIAL"}</span>
             <small>
@@ -304,8 +304,8 @@ export default function PainelPage() {
                     key={`${item.number}-${item.type}-${item.time}-${(historyPage - 1) * ITEMS_PER_PAGE + index}`}
                   >
                     <strong>{formatQueueNumber(item.number, item.type)}</strong>
-                    <span className={item.type === "preferencial" ? styles.priorityTag : styles.normalTag}>
-                      {item.type === "preferencial" ? "Preferencial" : "Normal"}
+                    <span className={item.type === CALL_TYPES.PREFERENCIAL ? styles.priorityTag : styles.normalTag}>
+                      {item.type === CALL_TYPES.PREFERENCIAL ? TYPE_LABELS.preferencial : TYPE_LABELS.normal}
                     </span>
                     <span>{item.time}</span>
                     <span className={styles.called}><CheckCircle2 size={15} /> Chamada</span>

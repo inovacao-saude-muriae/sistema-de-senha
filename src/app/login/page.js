@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { LockKeyhole } from "lucide-react";
 import { SESSION_KEY } from "../../lib/queue";
+import { USERNAME_REGEX, USERNAME_REGEX_LABEL } from "../../lib/constants.js";
 import styles from "./Login.module.css";
-import brandIcon from "@/app/favicon.ico";
+import brandIcon from "@/app/icon.ico";
 import Image from "next/image";
 
 export default function LoginPage() {
@@ -109,8 +110,6 @@ export default function LoginPage() {
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
                 placeholder="nome.sobrenome"
-                pattern="[a-zA-Z0-9]+([._][a-zA-Z0-9]+)*"
-                title="Use o formato nome.sobrenome"
                 autoComplete="username"
                 autoFocus
                 required

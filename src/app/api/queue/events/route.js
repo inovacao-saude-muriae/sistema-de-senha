@@ -1,6 +1,5 @@
 import { eventManager } from "@/lib/event-manager";
-
-const KEEPALIVE_INTERVAL = 30000; // 30 seconds
+import { SECTORS, KEEPALIVE_INTERVAL } from "@/lib/constants.js";
 
 /**
  * GET /api/queue/events?sector=farmacia
@@ -11,8 +10,8 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sector = searchParams.get("sector");
 
-  if (!sector || !["farmacia", "recepcao"].includes(sector)) {
-    return new Response("Invalid sector. Use 'farmacia' or 'recepcao'.", {
+  if (!sector || !Object.hasOwn(SECTORS, sector)) {
+    return new Response("Invalid sector.", {
       status: 400,
     });
   }

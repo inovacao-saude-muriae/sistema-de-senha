@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { queue } from "@/lib/repositories";
-
-const VALID_SECTORS = ["farmacia", "recepcao"];
+import { SECTORS, ALL_SECTORS } from "@/lib/constants.js";
 
 /* ─────────────────────────────────────────────────
    POST — reseta a sequência de senhas de um setor
@@ -19,9 +18,9 @@ export async function POST(request) {
     }
 
     const sectorsToReset =
-      sector === "all" ? VALID_SECTORS : [sector];
+      sector === ALL_SECTORS ? Object.keys(SECTORS) : [sector];
 
-    if (!sectorsToReset.every((s) => VALID_SECTORS.includes(s))) {
+    if (!sectorsToReset.every((s) => Object.hasOwn(SECTORS, s))) {
       return NextResponse.json(
         { error: "Setor inválido." },
         { status: 400 }

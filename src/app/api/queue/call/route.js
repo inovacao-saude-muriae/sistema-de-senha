@@ -3,6 +3,7 @@ import { queue } from "@/lib/repositories";
 import { eventManager } from "@/lib/event-manager";
 import { formatNumberString, normalizeCallType } from "@/lib/repositories/utils";
 import { auth } from "@/auth";
+import { SECTORS, LOCALE } from "@/lib/constants.js";
 
 /* ─────────────────────────────────────────────────
    POST — chama próxima senha de um setor
@@ -13,13 +14,18 @@ import { auth } from "@/auth";
    4. Salva chamada no banco
    5. Retorna número e tipo
 ───────────────────────────────────────────────── */
-export const POST = auth(async function POST (request) {
+export async function POST(request) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const { sector, type } = body;
 
     // Validate sector
-    if (!sector || !["farmacia", "recepcao"].includes(sector)) {
+    if (!sector || !Object.hasOwn(SECTORS, sector)) {
       return NextResponse.json(
         { error: "Setor não informado." },
         { status: 400 }
@@ -30,10 +36,12 @@ export const POST = auth(async function POST (request) {
     const { sequenceType, callType } = normalizeCallType(type);
 
     // Get next number
-    const nextNum = await queue.nextNumber(sector, sequenceType);
+    const nextResult = await queue.nextNumber(sector, sequenceType);
+    const nextNum = nextResult.number;
+    const isWraparound = nextResult.wraparound || false;
     const numberStr = formatNumberString(nextNum, sequenceType);
 
-    const attendantId = request.auth.user.id;
+    const attendantId = session.user.id;
 
     // Save the call
     const saved = await queue.saveCall({
@@ -50,7 +58,8 @@ export const POST = auth(async function POST (request) {
       id: saved.id,
       number: nextNum,
       type: sequenceType,
-      time: new Intl.DateTimeFormat("pt-BR", {
+      wraparound: isWraparound,
+      time: new Intl.DateTimeFormat(LOCALE, {
         hour: "2-digit",
         minute: "2-digit",
       }).format(new Date()),
@@ -62,6 +71,7 @@ export const POST = auth(async function POST (request) {
       number: nextNum,
       numberStr,
       type: sequenceType,
+      wraparound: isWraparound,
     });
   } catch (err) {
     if (err.status === 503 || err.message.includes("not configured") || err.message.includes("Não configurado")) {
@@ -75,4 +85,4 @@ export const POST = auth(async function POST (request) {
       { status: err.status || 500 }
     );
   }
-});
+}

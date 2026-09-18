@@ -2,12 +2,10 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { USERNAME_REGEX, DEFAULT_GUICHE } from "./lib/constants.js";
+import { initials } from "./lib/repositories/utils.js";
 
 const prisma = new PrismaClient();
-
-function isValidUsername(username) {
-  return /^[a-z0-9]+(?:[._][a-z0-9]+)*$/.test(username);
-}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: {
@@ -25,7 +23,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           .toLowerCase();
         const password = String(credentials?.password || "");
 
-        if (!isValidUsername(username) || !password) return null;
+        if (!USERNAME_REGEX.test(username) || !password) return null;
 
         const user = await prisma.users.findUnique({
           where: { username },
@@ -42,7 +40,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           role: user.role,
           sector: user.sector_id,
-          guiche: user.guiche_id || "none",
+          guiche: user.guiche_id || DEFAULT_GUICHE,
         };
       },
     }),
@@ -62,12 +60,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.sector = token.sector;
       session.user.guiche = token.guiche;
       session.user.initials = session.user.name
-        ? session.user.name
-            .split(/\s+/)
-            .map((p) => p[0])
-            .join("")
-            .slice(0, 2)
-            .toUpperCase()
+        ? initials(session.user.name)
         : "";
       return session;
     },

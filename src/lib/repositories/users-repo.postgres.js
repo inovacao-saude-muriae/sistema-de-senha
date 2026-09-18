@@ -1,26 +1,7 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../prisma-client.js";
-
-/**
- * Validate username format (nome.sobrenome)
- * @param {string} username
- * @returns {boolean}
- */
-function isValidUsername(username) {
-  return /^[a-z0-9]+(?:[._][a-z0-9]+)*$/.test(username);
-}
-
-/**
- * Create typed error with status
- * @param {number} status
- * @param {string} message
- * @returns {{ status: number, message: string }}
- */
-function routeError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
-}
+import { isValidUsername, routeError, generateEmail } from "./utils.js";
+import { DEFAULT_ROLE, BCRYPT_SALT_ROUNDS } from "../constants.js";
 
 export class UsersRepository {
   /**
@@ -79,8 +60,8 @@ export class UsersRepository {
       );
     }
 
-    const email = `${username}@central-atendimento.local`;
-    const passwordHash = await bcrypt.hash(password, 10);
+    const email = generateEmail(username);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
     try {
       const user = await prisma.users.create({
@@ -89,7 +70,7 @@ export class UsersRepository {
           email,
           password_hash: passwordHash,
           full_name,
-          role: role || "attendant",
+          role: role || DEFAULT_ROLE,
           sector_id: sector_id || null,
         },
         select: {

@@ -9,13 +9,23 @@ import {
   getQueueSnapshot,
   getServerQueueSnapshot,
   getServerSessionSnapshot,
-  getSessionSnapshot,
+  getSessionSnapshot, MIN_QUEUE_NUMBER,
   normalizeQueue,
   saveQueueState,
-  SECTORS,
   subscribeQueue,
   subscribeSession,
 } from "../../lib/queue";
+import {
+  SECTORS,
+  ROLES,
+  DEFAULT_SECTOR,
+  CALL_TYPES,
+  MAX_QUEUE_NUMBER,
+  DRAFT_PREFIX,
+  USERNAME_REGEX,
+  USERNAME_REGEX_LABEL,
+  NO_PASSWORD,
+} from "../../lib/constants.js";
 import styles from "./Admin.module.css";
 import { SidebarLayout } from "@/components/SidebarLayout/SidebarLayout";
 
@@ -71,7 +81,7 @@ export default function AdminPage() {
   /* segurança: só admin */
   useEffect(() => {
     const storedSession = getSessionSnapshot();
-    if (!storedSession || storedSession.role !== "admin") { router.push("/login"); }
+    if (!storedSession || storedSession.role !== ROLES.ADMIN) { router.push("/login"); }
   }, [router]);
 
   /* notícias */
@@ -99,8 +109,8 @@ export default function AdminPage() {
       : SECTORS[sectorId]?.name || sectorId;
 
     const msg = isAll
-      ? `ATENÇÃO\n\nIsso vai zerar as senhas de ${label}.\n\nA numeração voltará para 001. Esta ação não pode ser desfeita.\n\nDeseja continuar?`
-      : `Zerar as senhas do setor "${label}"?\n\nA numeração voltará para 001.`;
+      ? `ATENÇÃO\n\nIsso vai zerar as senhas de ${label}.\n\nA numeração voltará para ${MIN_QUEUE_NUMBER.toString().padStart(3, "0")}. Esta ação não pode ser desfeita.\n\nDeseja continuar?`
+      : `Zerar as senhas do setor "${label}"?\n\nA numeração voltará para ${MIN_QUEUE_NUMBER.toString().padStart(3, "0")}.`;
 
     if (!window.confirm(msg)) return;
 
@@ -118,8 +128,8 @@ export default function AdminPage() {
       sectorsToReset.forEach((s) => {
         next[s] = {
           ...normalizeQueue(currentState[s]),
-          normalCurrent: 0,
-          priorityCurrent: 0,
+          normalCurrent: NO_PASSWORD,
+          priorityCurrent: NO_PASSWORD,
           history: [],
         };
       });
@@ -138,8 +148,8 @@ export default function AdminPage() {
       }
       setMessage(
         isAll
-          ? "Todas as senhas foram resetadas. Numeração reinicia em 001."
-          : `Senhas de "${label}" zeradas. Numeração reinicia em 001.`,
+          ? `Todas as senhas foram resetadas. Numeração reinicia em ${MIN_QUEUE_NUMBER.toString().padStart(3, "0")}.`
+          : `Senhas de "${label}" zeradas. Numeração reinicia em ${MIN_QUEUE_NUMBER.toString().padStart(3, "0")}.`,
       );
     } catch {
       setMessage("Erro ao zerar os contadores.");
@@ -260,9 +270,12 @@ export default function AdminPage() {
                   <div>
                     <strong>{item.name}</strong>
                     <small>
-                      Normal: N{String(queue.normalCurrent).padStart(3, "0")} ·
-                      Preferencial: P
-                      {String(queue.priorityCurrent).padStart(3, "0")}
+                      Normal: {queue.normalCurrent === null || queue.normalCurrent === undefined
+                        ? "N---"
+                        : `N${String(queue.normalCurrent).padStart(3, "0")}`} ·
+                      Preferencial: {queue.priorityCurrent === null || queue.priorityCurrent === undefined
+                        ? "P---"
+                        : `P${String(queue.priorityCurrent).padStart(3, "0")}`}
                     </small>
                   </div>
                   <div className={styles.cardActions}>
@@ -288,7 +301,7 @@ export default function AdminPage() {
             <div className={styles.resetAllInfo}>
               <AlertTriangle size={16}/>
               <span>
-                Resetar todos os setores de uma vez — numeração volta para 001
+                Resetar todos os setores de uma vez — numeração volta para {MIN_QUEUE_NUMBER.toString().padStart(3, "0")}
                 em todos.
               </span>
             </div>
@@ -305,6 +318,9 @@ export default function AdminPage() {
             </button>
           </div>
         </section>
+
+        {/* ── Sincronizar senhas ── */}
+        <SyncSection />
 
         {/* ── Notícias do monitor ── */}
         <section className={styles.section}>
@@ -389,7 +405,7 @@ function UsersSection() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState("attendant");
+  const [role, setRole] = useState(ROLES.ATTENDANT);
   const [sectorId, setSectorId] = useState("");
 
   useEffect(() => {
@@ -434,7 +450,7 @@ function UsersSection() {
       setUsername("");
       setPassword("");
       setFullName("");
-      setRole("attendant");
+      setRole(ROLES.ATTENDANT);
       setSectorId("");
       setShowForm(false);
       await loadUsers();
@@ -500,8 +516,8 @@ function UsersSection() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="nome.sobrenome"
-                pattern="[a-zA-Z0-9]+([._][a-zA-Z0-9]+)*"
-                title="Use o formato nome.sobrenome"
+                pattern={USERNAME_REGEX}
+                title={USERNAME_REGEX_LABEL}
                 required
               />
             </label>
@@ -533,8 +549,8 @@ function UsersSection() {
             <label>
               Função
               <select value={role} onChange={(e) => setRole(e.target.value)}>
-                <option value="attendant">Atendente</option>
-                <option value="admin">Administrador</option>
+                <option value={ROLES.ATTENDANT}>Atendente</option>
+                <option value={ROLES.ADMIN}>Administrador</option>
               </select>
             </label>
 
@@ -566,7 +582,7 @@ function UsersSection() {
         {loading && <p className={styles.loadingMsg}>Carregando…</p>}
         {!loading && users.length === 0 && (
           <p className={styles.emptyMsg}>
-            Nenhum usuário cadastrado. Clique em "+ Novo usuário" para criar o
+            Nenhum usuário cadastrado. Clique em &quot;+ Novo usuário&quot; para criar o
             primeiro administrador.
           </p>
         )}
@@ -589,12 +605,12 @@ function UsersSection() {
                 <td>
                     <span
                       className={
-                        u.role === "admin"
+                        u.role === ROLES.ADMIN
                           ? styles.badgeAdmin
                           : styles.badgeAttendant
                       }
                     >
-                      {u.role === "admin" ? "Administrador" : "Atendente"}
+                      {u.role === ROLES.ADMIN ? "Administrador" : "Atendente"}
                     </span>
                 </td>
                 <td>
@@ -618,6 +634,122 @@ function UsersSection() {
           </table>
         )}
       </div>
+    </section>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEÇÃO DE SINCRONIZAÇÃO DE SENHAS
+═══════════════════════════════════════════════════════════ */
+function SyncSection() {
+  const [syncSector, setSyncSector] = useState(DEFAULT_SECTOR);
+  const [syncType, setSyncType] = useState(CALL_TYPES.NORMAL);
+  const [syncNumber, setSyncNumber] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+
+  async function handleSync(e) {
+    e.preventDefault();
+    setSyncMessage("");
+    setSyncing(true);
+
+    try {
+      const num = parseInt(syncNumber, 10);
+      if (!num || num < 1 || num > MAX_QUEUE_NUMBER) {
+        setSyncMessage("Use um número entre 1 e 999.");
+        return;
+      }
+
+      const res = await fetch("/api/queue/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sector: syncSector,
+          type: syncType,
+          nextNumber: num,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error);
+
+      setSyncMessage(data.message || `Próxima senha: ${data.numberStr}`);
+      setSyncNumber("");
+    } catch (err) {
+      setSyncMessage(err.message || "Erro ao sincronizar senha.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionTitle}>
+        <div>
+          <p>CONTROLE</p>
+          <h2>Sincronizar senhas</h2>
+        </div>
+      </div>
+
+      <p className={styles.syncInfo}>
+        Pule para um número específico de senha. Útil quando senhas são perdidas
+        ou não aparecem nos monitores.
+      </p>
+
+      {syncMessage && <div className={styles.alertBox}>{syncMessage}</div>}
+
+      <form className={styles.syncForm} onSubmit={handleSync}>
+        <div className={styles.syncRow}>
+          <label>
+            Setor
+            <select
+              value={syncSector}
+              onChange={(e) => setSyncSector(e.target.value)}
+            >
+              {Object.values(SECTORS).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label>
+            Tipo
+            <select
+              value={syncType}
+              onChange={(e) => setSyncType(e.target.value)}
+            >
+              <option value={CALL_TYPES.NORMAL}>Normal</option>
+              <option value={CALL_TYPES.PREFERENCIAL}>Preferencial</option>
+            </select>
+          </label>
+
+          <label>
+            Próximo número
+            <input
+              type="number"
+              min="1"
+              max="999"
+              value={syncNumber}
+              onChange={(e) => setSyncNumber(e.target.value)}
+              placeholder="Ex: 045"
+              required
+            />
+          </label>
+
+          <label>
+            &nbsp;
+            <button
+              type="submit"
+              className={styles.syncButton}
+              disabled={syncing || !syncNumber}
+            >
+              {syncing ? "Sincronizando…" : "Sincronizar"}
+            </button>
+          </label>
+        </div>
+      </form>
     </section>
   );
 }

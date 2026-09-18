@@ -5,10 +5,12 @@
   "main": "main.js",
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest",
+    "test:changed": "vitest --changed",
+    "test:failed": "vitest --onlyFailed",
     "test:run": "vitest run",
     "test:unit": "vitest run tests/unit/",
     "test:integration": "vitest run tests/integration/",
@@ -26,8 +28,8 @@
     "docker:down": "docker compose down"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1134.0",
     "@prisma/client": "^5.22.0",
-    "@supabase/supabase-js": "^2.45.0",
     "bcryptjs": "^3.0.3",
     "lucide-react": "^0.400.0",
     "next": "^16.3.3",
@@ -38,11 +40,11 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@vitest/coverage-v8": "^5.0.0",
+    "dotenv-cli": "^7.0.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.3",
-    "dotenv-cli": "^7.0.0",
     "happy-dom": "^20.14.0",
     "prisma": "^5.22.0",
     "vitest": "^5.0.0"

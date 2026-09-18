@@ -1,40 +1,6 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../prisma-client.js";
-
-/**
- * Validate username format (nome.sobrenome)
- * @param {string} username
- * @returns {boolean}
- */
-function isValidUsername(username) {
-  return /^[a-z0-9]+(?:[._][a-z0-9]+)*$/.test(username);
-}
-
-/**
- * Create typed error with status
- * @param {number} status
- * @param {string} message
- * @returns {{ status: number, message: string }}
- */
-function routeError(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
-}
-
-/**
- * Generate initials from full name (max 2 chars)
- * @param {string} fullName
- * @returns {string}
- */
-function initials(fullName) {
-  return fullName
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
+import { isValidUsername, routeError, initials, getDefaultGuiche } from "./utils.js";
 
 export class AuthRepository {
   /**
@@ -98,7 +64,7 @@ export class AuthRepository {
       initials: initials(user.full_name),
       role: user.role,
       sector: user.sector_id,
-      guiche: user.guiche_id || "none",
+        guiche: user.guiche_id || getDefaultGuiche(),
     };
   }
 }

@@ -1,32 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-let isAdminConfigured = false;
-let adminClient = null;
-let isConfigured = false;
-let anonClient = null;
-
 const queueRepoMock = vi.hoisted(() => ({
   nextNumber: vi.fn(),
   saveCall: vi.fn(),
   resetSector: vi.fn(),
-}));
-
-vi.mock("@/lib/supabase-admin", () => ({
-  get isSupabaseAdminConfigured() {
-    return isAdminConfigured;
-  },
-  get supabaseAdmin() {
-    return adminClient;
-  },
-}));
-
-vi.mock("@/lib/supabase", () => ({
-  get isSupabaseConfigured() {
-    return isConfigured;
-  },
-  get supabase() {
-    return anonClient;
-  },
 }));
 
 vi.mock("@/lib/repositories", () => ({
@@ -45,10 +22,6 @@ import {
 } from "@/lib/queue-server";
 
 beforeEach(() => {
-  isAdminConfigured = false;
-  isConfigured = false;
-  adminClient = null;
-  anonClient = null;
   queueRepoMock.nextNumber.mockReset();
   queueRepoMock.saveCall.mockReset();
   queueRepoMock.resetSector.mockReset();
@@ -190,69 +163,11 @@ describe("resetSectorSequence", () => {
 });
 
 describe("getQueueDb / getQueueDbClients", () => {
-  it("retorna marcador de backend quando sem clientes configurados", () => {
-    expect(getQueueDb()).toEqual({ __backend_marker: true });
-    expect(getQueueDbClients()).toEqual([]);
-  });
-
-  it("retorna marcador de backend quando admin configurado", () => {
-    isAdminConfigured = true;
-    isConfigured = false;
-    adminClient = { __admin: 1 };
-    expect(getQueueDb()).toEqual({ __backend_marker: true });
-    expect(getQueueDbClients()).toEqual([]);
-  });
-
-  it("retorna marcador de backend quando só anon configurado", () => {
-    isAdminConfigured = false;
-    isConfigured = true;
-    anonClient = { __anon: 1 };
-    expect(getQueueDb()).toEqual({ __backend_marker: true });
-    expect(getQueueDbClients()).toEqual([]);
-  });
-
-  it("retorna marcador de backend quando ambos configurados", () => {
-    isAdminConfigured = true;
-    isConfigured = true;
-    adminClient = { __admin: 1 };
-    anonClient = { __anon: 1 };
+  it("retorna marcador de backend", () => {
     expect(getQueueDb()).toEqual({ __backend_marker: true });
     expect(getQueueDbClients()).toEqual([]);
   });
 });
-
-// Cadeia select().eq().eq().maybeSingle() pronto para rejeitar/resolver
-function makeMaybeSingleChain(resolution) {
-  const chain = {
-    select: vi.fn(),
-    eq: vi.fn(),
-    maybeSingle: vi.fn(),
-  };
-  chain.select.mockReturnValue(chain);
-  chain.eq.mockReturnValue(chain);
-  chain.maybeSingle.mockImplementation(() =>
-    typeof resolution === "function" ? resolution() : Promise.resolve(resolution),
-  );
-  return chain;
-}
-
-// Cadeia select().eq().limit() do incrementLegacyColumns
-function makeLegacyChain(selectResolve, updateResolve) {
-  const legacy = {
-    select: vi.fn(),
-    eq: vi.fn(),
-    limit: vi.fn(),
-  };
-  legacy.select.mockReturnValue(legacy);
-  legacy.eq.mockReturnValue(legacy);
-  legacy.limit.mockResolvedValue(selectResolve);
-  const update = {
-    update: vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue(updateResolve),
-    }),
-  };
-  return { legacy, update };
-}
 
 describe("nextQueueNumberForSector (fallback legacy)", () => {
   it("usa legacy quando current_number lança erro não-column", async () => {
@@ -272,31 +187,6 @@ describe("nextQueueNumberForSector (fallback legacy)", () => {
     expect(await nextQueueNumberForSector({}, "farmacia", "normal")).toBe(1);
   });
 });
-
-function makeDbWithCurrent() {
-  const chain = {
-    select: vi.fn(),
-    eq: vi.fn(),
-    maybeSingle: vi.fn(),
-    update: vi.fn(),
-  };
-  chain.select.mockReturnValue(chain);
-  chain.eq.mockReturnValue(chain);
-  chain.maybeSingle.mockResolvedValue({ data: { current_number: 3 }, error: null });
-  chain.update.mockReturnValue({
-    eq: vi.fn(),
-  });
-  const updateEq = {
-    eq: vi.fn().mockResolvedValue({ error: null }),
-  };
-  updateEq.eq.mockReturnValue(updateEq);
-  chain.update.mockReturnValue({ eq: vi.fn().mockReturnValue(updateEq) });
-  const from = vi.fn().mockReturnValue(chain);
-  return {
-    rpc: vi.fn().mockResolvedValue({ data: null, error: {} }),
-    from,
-  };
-}
 
 it("usa fallback quando RPC falha (incrementCurrentNumber atualiza)", async () => {
   queueRepoMock.nextNumber.mockResolvedValue(4);

@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  POLLING_INTERVAL,
+  SSE_BACKOFF_BASE,
+  SSE_BACKOFF_MAX,
+  SSE_EVENT_TYPES,
+  API_ROUTES,
+  DEFAULT_RECENT_LIMIT,
+} from "../constants.js";
 
 /**
  * Hook for realtime queue events with SSE and automatic polling fallback.
@@ -43,7 +51,7 @@ export function useQueueEvents(sector) {
 
       try {
         const res = await fetch(
-          `/api/queue/recent?sector=${sectorRef.current}&limit=5`,
+          `${API_ROUTES.QUEUE_RECENT}?sector=${sectorRef.current}&limit=5`,
         );
         if (!res.ok) return;
 
@@ -57,7 +65,7 @@ export function useQueueEvents(sector) {
       } catch {
         // Silently ignore polling errors
       }
-    }, 3000);
+    }, POLLING_INTERVAL);
   }, []);
 
   // Connect to SSE with auto-reconnect
@@ -72,7 +80,7 @@ export function useQueueEvents(sector) {
 
     try {
       const es = new EventSource(
-        `/api/queue/events?sector=${sectorRef.current}`,
+        `${API_ROUTES.QUEUE_EVENTS}?sector=${sectorRef.current}`,
       );
       eventSourceRef.current = es;
 
@@ -88,10 +96,10 @@ export function useQueueEvents(sector) {
 
         try {
           const data = JSON.parse(e.data);
-          if (data.type === "call" && data.call) {
+          if (data.type === SSE_EVENT_TYPES.CALL && data.call) {
             lastCallIdRef.current = data.call.id;
             setLastCall(data.call);
-          } else if (data.type === "recall" && data.call) {
+          } else if (data.type === SSE_EVENT_TYPES.RECALL && data.call) {
             lastCallIdRef.current = data.call.id;
             setLastCall({ ...data.call, isRecall: true });
           }
@@ -111,8 +119,8 @@ export function useQueueEvents(sector) {
 
         // Schedule reconnection with exponential backoff
         const delay = Math.min(
-          1000 * Math.pow(2, retryCountRef.current),
-          30000,
+          SSE_BACKOFF_BASE * Math.pow(2, retryCountRef.current),
+          SSE_BACKOFF_MAX,
         );
         retryCountRef.current++;
 
@@ -143,13 +151,13 @@ export function useQueueEvents(sector) {
 
     async function fetchInitial() {
       try {
-        const res = await fetch(`/api/queue/recent?sector=${sector}&limit=30`);
+        const res = await fetch(`${API_ROUTES.QUEUE_RECENT}?sector=${sector}&limit=${DEFAULT_RECENT_LIMIT}`);
         if (!res.ok) return;
 
         const data = await res.json();
         if (data.calls?.length && mountedRef.current) {
           lastCallIdRef.current = data.calls[0].id;
-          setLastCall(data.calls[0]);
+          setLastCall({ ...data.calls[0], _source: "initial" });
         }
       } catch {
         // Ignore initial sync errors

@@ -25,7 +25,7 @@ describe("Painel page — audio isolation", () => {
   });
 
   it("reCall chama endpoint /api/queue/recall em vez de tocar áudio local", () => {
-    expect(painelCode).toMatch(/\/api\/queue\/recall/);
+    expect(painelCode).toMatch(/API_ROUTES\.QUEUE_RECALL|\/api\/queue\/recall/);
     expect(painelCode).not.toMatch(/forceAnnounce.*reCall|reCall.*forceAnnounce/);
   });
 

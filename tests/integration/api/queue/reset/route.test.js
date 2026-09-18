@@ -52,7 +52,7 @@ describe("/api/queue/reset — integration", () => {
           sector_id_call_type: { sector_id: "farmacia", call_type: "normal" },
         },
       });
-      expect(seq.current_number).toBe(0);
+      expect(seq.current_number).toBe(-1);
     });
 
     it("reseta todos os setores com 'all'", async () => {
@@ -78,8 +78,8 @@ describe("/api/queue/reset — integration", () => {
           sector_id_call_type: { sector_id: "recepcao", call_type: "normal" },
         },
       });
-      expect(farmaciaSeq.current_number).toBe(0);
-      expect(recepcaoSeq.current_number).toBe(0);
+      expect(farmaciaSeq.current_number).toBe(-1);
+      expect(recepcaoSeq.current_number).toBe(-1);
     });
 
     it("retorna success: true e lista de setores resetados", async () => {

@@ -1,29 +1,46 @@
-export const SECTORS = {
-  farmacia: { id: "farmacia", name: "Farmácia", shortName: "FARMÁCIA" },
-  recepcao: { id: "recepcao", name: "Recepção Saúde", shortName: "RECEPÇÃO" },
+import {
+  SECTORS,
+  GUICHES,
+  QUEUE_KEY,
+  SESSION_KEY,
+  DEFAULT_SECTOR,
+  ALL_SECTORS,
+  MAX_QUEUE_NUMBER,
+  MIN_QUEUE_NUMBER,
+  CALL_TYPES,
+  TYPE_FIELDS,
+  TYPE_LABELS,
+  TYPE_PREFIXES,
+  DEFAULT_QUEUE_NUMBER,
+  NO_PASSWORD,
+} from "./constants.js";
+
+export {
+  SECTORS,
+  GUICHES,
+  QUEUE_KEY,
+  SESSION_KEY,
+  DEFAULT_SECTOR,
+  ALL_SECTORS,
+  MAX_QUEUE_NUMBER,
+  MIN_QUEUE_NUMBER,
+  CALL_TYPES,
+  TYPE_FIELDS,
+  TYPE_LABELS,
+  TYPE_PREFIXES,
+  NO_PASSWORD,
 };
-
-export const GUICHES = [
-  { id: "none", name: "Sem guichê" },
-  { id: "guiche-1", name: "Guichê 1" },
-  { id: "guiche-2", name: "Guichê 2" },
-  { id: "guiche-3", name: "Guichê 3" },
-  { id: "guiche-4", name: "Guichê 4" },
-];
-
-export const QUEUE_KEY = "saude-queue-state";
-export const SESSION_KEY = "saude-attendant-session";
 
 const serverQueueSnapshot = {
   farmacia: {
-    normalCurrent: 0,
-    priorityCurrent: 0,
+    normalCurrent: NO_PASSWORD,
+    priorityCurrent: NO_PASSWORD,
     history: [],
     historyDate: "",
   },
   recepcao: {
-    normalCurrent: 0,
-    priorityCurrent: 0,
+    normalCurrent: NO_PASSWORD,
+    priorityCurrent: NO_PASSWORD,
     history: [],
     historyDate: "",
   },
@@ -42,27 +59,39 @@ function localDateKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-export function nextQueueNumber(current = 0) {
+/**
+ * @param {number | undefined | null} current
+ * @returns {number}
+ */
+export function nextQueueNumber(current = undefined) {
+  if (current === undefined || current === null) {
+    return MIN_QUEUE_NUMBER;
+  }
+
   const next = Number(current) + 1;
-  return next > 999 ? 0 : next;
+  return next > MAX_QUEUE_NUMBER ? MIN_QUEUE_NUMBER : next;
 }
 
 export function formatQueueNumber(number, type = "normal") {
-  const prefix = type === "preferencial" || type === "preferential" ? "P" : "N";
-  return `${prefix}${String(Number(number) || 0).padStart(3, "0")}`;
+  const prefix =
+    type === "preferencial" || type === "preferential"
+      ? TYPE_PREFIXES.preferencial
+      : TYPE_PREFIXES.normal;
+  if (number === null || number === undefined) return `${prefix}---`;
+  return `${prefix}${String(Number(number)).padStart(3, "0")}`;
 }
 
 export function getInitialState() {
   return {
     farmacia: {
-      normalCurrent: 0,
-      priorityCurrent: 0,
+      normalCurrent: NO_PASSWORD,
+      priorityCurrent: NO_PASSWORD,
       history: [],
       historyDate: localDateKey(),
     },
     recepcao: {
-      normalCurrent: 0,
-      priorityCurrent: 0,
+      normalCurrent: NO_PASSWORD,
+      priorityCurrent: NO_PASSWORD,
       history: [],
       historyDate: localDateKey(),
     },
@@ -82,8 +111,8 @@ export function clearHistoryFromNewDay(state) {
           ...queue,
           // PRESERVA os contadores — nunca zera ao mudar de dia
           normalCurrent:
-            queue.normalCurrent ?? queue.current ?? 0,
-          priorityCurrent: queue.priorityCurrent ?? 0,
+            queue.normalCurrent ?? queue.current ?? NO_PASSWORD,
+          priorityCurrent: queue.priorityCurrent ?? NO_PASSWORD,
           // Limpa apenas o histórico visual
           history: [],
           historyDate: today,
@@ -139,8 +168,8 @@ export function readSession() {
 
 export function normalizeQueue(queue) {
   return {
-    normalCurrent: queue?.normalCurrent ?? queue?.current ?? 0,
-    priorityCurrent: queue?.priorityCurrent ?? 0,
+    normalCurrent: queue?.normalCurrent ?? queue?.current ?? NO_PASSWORD,
+    priorityCurrent: queue?.priorityCurrent ?? NO_PASSWORD,
     history: queue?.history ?? [],
     historyDate: queue?.historyDate ?? localDateKey(),
   };
@@ -249,7 +278,7 @@ export async function callNextNumber({ sector, type }) {
     }
 
     next = Number(next);
-    if (!Number.isInteger(next) || next < 0 || next > 999) {
+    if (!Number.isInteger(next) || next < MIN_QUEUE_NUMBER || next > MAX_QUEUE_NUMBER) {
       return { ok: false, error: "Número de senha inválido." };
     }
 

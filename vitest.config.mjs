@@ -19,23 +19,29 @@ export default defineConfig(({ mode }) => {
       include: ["tests/**/*.test.{js,jsx}"],
       setupFiles: ["./tests/setup.js"],
       fileParallelism: false,
+
       env: {
         DATABASE_URL: env.DATABASE_URL_TEST,
         NEWS_DIR: join(root, "tests", "fixtures", "news"),
+        S3_ENDPOINT: env.S3_ENDPOINT_TEST,
+        S3_REGION: env.S3_REGION_TEST,
+        S3_ACCESS_KEY: env.S3_ACCESS_KEY_TEST,
+        S3_SECRET_KEY: env.S3_SECRET_KEY_TEST,
+        S3_BUCKET: env.S3_BUCKET_TEST,
+        S3_PUBLIC_URL: env.S3_PUBLIC_URL_TEST,
       },
 
-      // Override environment for integration tests (need Node.js for Supabase client)
-      environmentMatchGlobs: [
-        ["tests/integration/**", "node"],
-      ],
+      server: {
+        deps: {
+          inline: ["next-auth", "next"],
+        },
+      },
 
       coverage: {
         provider: "v8",
         include: [
           "src/lib/repositories/**/*.js",
           "src/lib/queue-server.js",
-          "src/lib/supabase.js",
-          "src/lib/supabase-admin.js",
           "src/lib/prisma-client.js",
           "src/lib/event-manager.js",
           "src/lib/hooks/**/*.js",

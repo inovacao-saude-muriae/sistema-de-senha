@@ -1,15 +1,12 @@
 import { prisma } from "../prisma-client.js";
-import { normalizeCallType, formatNumberString } from "./utils.js";
-
-/**
- * Get next value with wraparound at 1000
- * @param {number} current
- * @returns {number}
- */
-function nextValue(current) {
-  const value = Number(current) || 0;
-  return value >= 1000 ? 1 : value + 1;
-}
+import { normalizeCallType } from "./utils.js";
+import {
+  DEFAULT_QUEUE_NUMBER,
+  DEFAULT_RECENT_LIMIT,
+  LOCALE,
+  MAX_QUEUE_NUMBER,
+  MIN_QUEUE_NUMBER
+} from "../constants.js";
 
 /**
  * Format time for display (HH:mm)
@@ -17,7 +14,7 @@ function nextValue(current) {
  * @returns {string}
  */
 function formatTime(date) {
-  return new Intl.DateTimeFormat("pt-BR", {
+  return new Intl.DateTimeFormat(LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
@@ -26,16 +23,20 @@ function formatTime(date) {
 export class QueueRepository {
   /**
    * Get next number for sector and type (normal/preferencial)
-   * Uses atomic transaction with upsert + wraparound at 1000.
+   * Uses atomic transaction with upsert + wraparound at `MAX_QUEUE_NUMBER`.
+   * Returns { number, wraparound } — wraparound is true when 999→000 occurs.
    * @param {'farmacia'|'recepcao'} sector
    * @param {'normal'|'preferencial'} type
-   * @returns {Promise<number>}
+   * @returns {Promise<{ number: number, wraparound: boolean }>}
    */
   async nextNumber(sector, type) {
     const { sequenceType } = normalizeCallType(type);
 
-    const result = await prisma.$transaction(async (tx) => {
-      // Upsert the sequence row, incrementing the counter atomically
+    return await prisma.$transaction(async (tx) => {
+      // Upsert the sequence row, incrementing the counter atomically.
+      // New rows start at 0 (first password = 000). Prisma's upsert applies
+      // the increment only to existing rows, so a newly created row returns
+      // the create value (0) directly.
       const seq = await tx.queue_sequences.upsert({
         where: {
           sector_id_call_type: {
@@ -50,12 +51,12 @@ export class QueueRepository {
         create: {
           sector_id: sector,
           call_type: sequenceType,
-          current_number: 1,
+          current_number: 0,
         },
       });
 
-      // Handle wraparound at 1000
-      if (seq.current_number > 1000) {
+      // Handle wraparound: if counter exceeded MAX, reset to -1 and return 0
+      if (seq.current_number > MAX_QUEUE_NUMBER) {
         await tx.queue_sequences.update({
           where: {
             sector_id_call_type: {
@@ -64,17 +65,15 @@ export class QueueRepository {
             },
           },
           data: {
-            current_number: 1,
+            current_number: MIN_QUEUE_NUMBER - 1,
             updated_at: new Date(),
           },
         });
-        return 1;
+        return { number: MIN_QUEUE_NUMBER, wraparound: true };
       }
 
-      return seq.current_number;
+      return { number: seq.current_number, wraparound: false };
     });
-
-    return result;
   }
 
   /**
@@ -115,7 +114,8 @@ export class QueueRepository {
   }
 
   /**
-   * Reset sequence for sector
+   * Reset sequence for sector.
+   * Sets counter to -1 so the next call returns 0 (first password = 000).
    * @param {'farmacia'|'recepcao'} sector
    * @returns {Promise<void>}
    */
@@ -125,8 +125,46 @@ export class QueueRepository {
         sector_id: sector,
       },
       data: {
-        current_number: 0,
+        current_number: MIN_QUEUE_NUMBER - 1,
         updated_at: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Set next number for sector and type (sync/reset to specific value)
+   * The next call to nextNumber() will return this value.
+   * @param {'farmacia'|'recepcao'} sector
+   * @param {'normal'|'preferencial'} type
+   * @param {number} nextNumber - The next number to return
+   * @returns {Promise<void>}
+   */
+  async setNextNumber(sector, type, nextNumber) {
+    const { sequenceType } = normalizeCallType(type);
+    const num = Number(nextNumber);
+
+    if (!Number.isInteger(num) || num < MIN_QUEUE_NUMBER || num > MAX_QUEUE_NUMBER) {
+      throw new Error(`Número inválido ("${num}"). Use um valor entre ${MIN_QUEUE_NUMBER} e ${MAX_QUEUE_NUMBER}.`);
+    }
+
+    // Store nextNumber - 1 because nextNumber() increments before returning
+    const currentNumber = num - 1;
+
+    await prisma.queue_sequences.upsert({
+      where: {
+        sector_id_call_type: {
+          sector_id: sector,
+          call_type: sequenceType,
+        },
+      },
+      update: {
+        current_number: currentNumber,
+        updated_at: new Date(),
+      },
+      create: {
+        sector_id: sector,
+        call_type: sequenceType,
+        current_number: currentNumber,
       },
     });
   }
@@ -142,7 +180,7 @@ export class QueueRepository {
    *   time: string
    * }>>}
    */
-  async getRecentCalls(sector, limit = 30) {
+  async getRecentCalls(sector, limit = DEFAULT_RECENT_LIMIT) {
     try {
       const calls = await prisma.queue_calls.findMany({
         where: {

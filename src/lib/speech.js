@@ -1,6 +1,26 @@
+import {
+  TTS_MAX_NUMBER,
+  TTS_DEDUP_WINDOW,
+  TTS_VOICE_TIMEOUT,
+  TTS_WATCHDOG_INTERVAL,
+  TTS_SPEECH_RATE,
+  TTS_PITCH,
+  TTS_VOLUME,
+  TTS_RETRY_DELAY,
+  TTS_BEEP_FREQ_LOW,
+  TTS_BEEP_FREQ_HIGH,
+  TTS_BEEP_DURATION,
+  TTS_BEEP_OFFSET,
+  TTS_GAIN,
+  TTS_POST_BEEP_BUFFER,
+  TTS_SPEAK_DELAY,
+  TTS_PRE_SPEECH_PAUSE,
+  LOCALE,
+  CALL_TYPES,
+} from "./constants.js";
+
 const CHANNEL_NAME      = "saude-tts";
 const MONITOR_HEARTBEAT_MS = 2000;
-const DEDUP_WINDOW_MS   = 10000;
 
 // ─── Estado do módulo ──────────────────────────────────────────────────────────
 // Dois contadores de geração SEPARADOS para evitar que speakNow e speakWithAlert
@@ -33,7 +53,7 @@ function getChannel() {
 
 // ─── Conversão numérica pt-BR ─────────────────────────────────────────────────
 export function numberToPt(value) {
-  const n = Math.max(0, Math.min(1000, Number(value) || 0));
+  const n = Math.max(0, Math.min(TTS_MAX_NUMBER, Number(value) || 0));
   if (n === 0) return "zero";
   if (n === 1000) return "mil";
 
@@ -61,7 +81,7 @@ export function numberToPt(value) {
 export function buildSpeechText(number, type) {
   const n      = Number(number) || 0;
   const spoken = numberToPt(n);
-  return (type === "preferencial" || type === "preferential")
+  return (type === CALL_TYPES.PREFERENCIAL || type === CALL_TYPES.PREFERENTIAL)
     ? `Senha preferencial. ${spoken}.`
     : `Senha. ${spoken}.`;
 }
@@ -85,7 +105,7 @@ function waitForVoices() {
   return new Promise((resolve) => {
     const done = () => { voicesReady = true; resolve(); };
     window.speechSynthesis.addEventListener("voiceschanged", done, { once: true });
-    window.setTimeout(done, 1500);
+    window.setTimeout(done, TTS_VOICE_TIMEOUT);
   });
 }
 
@@ -98,13 +118,13 @@ function startResumeWatch() {
   resumeTimer = window.setInterval(() => {
     if (!window.speechSynthesis.speaking) { stopResumeWatch(); return; }
     window.speechSynthesis.resume();
-  }, 3000);
+  }, TTS_WATCHDOG_INTERVAL);
 }
 
 // ─── Cria e fala um utterance ─────────────────────────────────────────────────
 function doSpeak(synth, text, onEnd) {
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "pt-BR"; u.rate = 0.88; u.pitch = 1; u.volume = 1;
+  u.lang = LOCALE; u.rate = TTS_SPEECH_RATE; u.pitch = TTS_PITCH; u.volume = TTS_VOLUME;
   const voice = pickVoice(); if (voice) u.voice = voice;
   u.onend   = onEnd;
   u.onerror = (e) => {
@@ -112,11 +132,11 @@ function doSpeak(synth, text, onEnd) {
     // Retry com novo utterance
     window.setTimeout(() => {
       const r = new SpeechSynthesisUtterance(text);
-      r.lang = "pt-BR"; r.rate = 0.88; r.pitch = 1; r.volume = 1;
+      r.lang = LOCALE; r.rate = TTS_SPEECH_RATE; r.pitch = TTS_PITCH; r.volume = TTS_VOLUME;
       const v = pickVoice(); if (v) r.voice = v;
       r.onend = onEnd;
       synth.resume(); synth.speak(r);
-    }, 400);
+    }, TTS_RETRY_DELAY);
   };
   synth.speak(u);
 }
@@ -130,8 +150,8 @@ function playAlertBeep() {
     try {
       const ctx   = new (window.AudioContext || window.webkitAudioContext)();
       const beeps = [
-        { freq: 880,  start: 0,    dur: 0.18 },
-        { freq: 1100, start: 0.24, dur: 0.18 },
+        { freq: TTS_BEEP_FREQ_LOW,  start: 0,    dur: TTS_BEEP_DURATION },
+        { freq: TTS_BEEP_FREQ_HIGH, start: TTS_BEEP_OFFSET, dur: TTS_BEEP_DURATION },
       ];
       let lastEnd = 0;
       for (const b of beeps) {
@@ -142,13 +162,13 @@ function playAlertBeep() {
         const t0 = ctx.currentTime + b.start;
         const t1 = t0 + b.dur;
         gain.gain.setValueAtTime(0, t0);
-        gain.gain.linearRampToValueAtTime(0.6, t0 + 0.02);
-        gain.gain.setValueAtTime(0.6, t1 - 0.04);
+        gain.gain.linearRampToValueAtTime(TTS_GAIN, t0 + 0.02);
+        gain.gain.setValueAtTime(TTS_GAIN, t1 - 0.04);
         gain.gain.linearRampToValueAtTime(0, t1);
         osc.start(t0); osc.stop(t1);
         lastEnd = t1;
       }
-      window.setTimeout(resolve, (lastEnd - ctx.currentTime) * 1000 + 100);
+      window.setTimeout(resolve, (lastEnd - ctx.currentTime) * 1000 + TTS_POST_BEEP_BUFFER);
     } catch { resolve(); }
   });
 }
@@ -171,7 +191,7 @@ function speakNow(text) {
     // Não cancela a síntese de alertGeneration — apenas fala por cima se necessário
     synth.resume();
     doSpeak(synth, text, () => {/* nada */});
-  }, 100);
+  }, TTS_SPEAK_DELAY);
 }
 
 // ─── speakWithAlert — chamadas de senha (beep → pausa → fala) ────────────────
@@ -179,7 +199,7 @@ function speakNow(text) {
 async function speakWithAlert(text, key = "", force = false) {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
 
-  if (!force && key && key === lastSpokenKey && Date.now() - lastSpokenAt < DEDUP_WINDOW_MS) return;
+  if (!force && key && key === lastSpokenKey && Date.now() - lastSpokenAt < TTS_DEDUP_WINDOW) return;
   if (key) { lastSpokenKey = key; lastSpokenAt = Date.now(); }
 
   const gen   = ++alertGeneration;
@@ -201,7 +221,7 @@ async function speakWithAlert(text, key = "", force = false) {
   if (gen !== alertGeneration) return;
 
   // 3. Pausa antes de falar
-  await new Promise((r) => window.setTimeout(r, 250));
+  await new Promise((r) => window.setTimeout(r, TTS_PRE_SPEECH_PAUSE));
   if (gen !== alertGeneration) return;
 
   synth.resume();

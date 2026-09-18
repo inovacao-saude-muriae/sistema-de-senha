@@ -1,5 +1,21 @@
 import { beforeEach, vi } from "vitest";
 
+vi.mock("@/auth", () => ({
+  auth: vi.fn().mockResolvedValue({
+    user: {
+      id: "c0f4795e-f467-4695-b479-5ef467c695a6",
+      name: "Dev Teste",
+      email: "dev@teste.com",
+      role: "admin",
+    },
+    expires: new Date(Date.now() + 2 * 86400000).toISOString(),
+  }),
+}));
+
+if (typeof window === "undefined") {
+  // Skip DOM-only setup in node environment (e.g. integration tests)
+} else {
+
 function makeLocalStorage() {
   const store = new Map();
   return {
@@ -86,3 +102,5 @@ beforeEach(() => {
 });
 
 global.__localStorage = localStorage;
+
+} // end else (window defined)

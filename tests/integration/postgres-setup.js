@@ -15,7 +15,7 @@ const prisma = new PrismaClient();
  * @returns {{ id: string, username: string, password: string }}
  */
 export async function seedTestUser(data) {
-  const id = crypto.randomUUID();
+  const id = data.id || crypto.randomUUID();
   const username = data.username || `test.user.${Date.now()}`;
   const email = `${username}@central-atendimento.local`;
   const rawPassword = data.password || "default123";

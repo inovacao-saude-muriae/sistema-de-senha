@@ -1,4 +1,5 @@
 import { prisma } from "../prisma-client.js";
+import { MIN_DAYS, MAX_DAYS, DEFAULT_DAYS, LOCALE, CALL_TYPES } from "../constants.js";
 
 /**
  * Build empty response structure
@@ -23,7 +24,7 @@ function emptyResponse(days) {
  * @returns {string}
  */
 function formatTime(date) {
-  return new Intl.DateTimeFormat("pt-BR", {
+  return new Intl.DateTimeFormat(LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
@@ -40,9 +41,9 @@ function formatCallRecord(call) {
     sector_id: call.sector_id,
     number: call.number_int,
     type:
-      call.type === "preferential" || call.type === "preferencial"
-        ? "preferencial"
-        : "normal",
+      call.type === CALL_TYPES.PREFERENTIAL || call.type === CALL_TYPES.PREFERENCIAL
+        ? CALL_TYPES.PREFERENCIAL
+        : CALL_TYPES.NORMAL,
     time: formatTime(new Date(call.created_at || Date.now())),
   };
 }
@@ -71,7 +72,7 @@ export class ReadRepository {
       const sector = options.sector || null;
       const since = options.since
         ? new Date(options.since)
-        : new Date(Date.now() - (options.days || 30) * 24 * 60 * 60 * 1000);
+        : new Date(Date.now() - (options.days || DEFAULT_DAYS) * 24 * 60 * 60 * 1000);
       const until = options.until ? new Date(options.until) : null;
       const limit = options.limit || 200;
 
@@ -162,9 +163,9 @@ export class ReadRepository {
 
       return {
         days: Math.min(
-          90,
+          MAX_DAYS,
           Math.max(
-            1,
+            MIN_DAYS,
             Math.ceil((Date.now() - since.getTime()) / (24 * 60 * 60 * 1000)),
           ),
         ),
@@ -181,7 +182,7 @@ export class ReadRepository {
       };
     } catch (error) {
       // On error, return empty structure instead of throwing
-      const days = Math.min(90, Math.max(1, Number(options.days) || 30));
+      const days = Math.min(MAX_DAYS, Math.max(MIN_DAYS, Number(options.days) || DEFAULT_DAYS));
       return emptyResponse(days);
     }
   }

@@ -2,6 +2,7 @@ import { queue } from "./repositories";
 
 // Re-export utilities for backward compatibility
 import { normalizeCallType, formatNumberString, isInvalidApiKeyError } from "./repositories/utils";
+import { CALL_TYPES } from "./constants.js";
 
 // The actual queue logic is now in the repository layer
 // This file maintains backward compatibility by delegating to the repository
@@ -42,8 +43,8 @@ export async function nextQueueNumberForSector(db, sector, sequenceType) {
   // Delegates to repository - db parameter is ignored for backward compatibility
   // Note: repository expects type ('normal'|'preferencial') but sequenceType
   // is the same as type in our implementation
-  const type = sequenceType === 'preferencial' || sequenceType === 'preferential'
-    ? 'preferencial'
-    : 'normal';
+  const type = sequenceType === CALL_TYPES.PREFERENCIAL || sequenceType === CALL_TYPES.PREFERENTIAL
+    ? CALL_TYPES.PREFERENCIAL
+    : CALL_TYPES.NORMAL;
   return queue.nextNumber(sector, type);
 }
