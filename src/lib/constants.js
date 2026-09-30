@@ -53,9 +53,13 @@ export const POLLING_INTERVAL = 3000;
 export const NEWS_CAROUSEL_INTERVAL = 5000;
 export const SSE_BACKOFF_BASE = 1000;
 export const SSE_BACKOFF_MAX = 30000;
+// Teto de streams SSE simultâneos por setor. Cada conexão segura um file
+// descriptor e um timer de keepalive; sem teto, um cliente poderia abrir streams
+// ilimitados e exaurir recursos do processo Node.
+export const MAX_SSE_CONNECTIONS_PER_SECTOR = 50;
 
 // ── Eventos SSE ──
-export const SSE_EVENT_TYPES = { CALL: "call", RECALL: "recall" };
+export const SSE_EVENT_TYPES = { CALL: "call", RECALL: "recall", RESET: "reset" };
 
 // ── Auth ──
 export const USERNAME_REGEX = /^[a-z0-9]+(?:[._][a-z0-9]+)*$/;
@@ -139,6 +143,10 @@ export const KEYBOARD_SHORTCUTS = {
 
 // ── Chaves de armazenamento ──
 export const QUEUE_KEY = "saude-queue-state";
+// Último marcador de reset visto por setor. Persistido para que um reload
+// consiga comparar com o servidor — sem isso, um monitor que ficou desligado
+// durante o reset adotaria o marcador novo e jamais invalidaria a fila velha.
+export const RESET_MARKER_KEY = "saude-queue-reset-markers";
 export const SESSION_KEY = "saude-attendant-session";
 
 // ── Guichês ──

@@ -128,4 +128,115 @@ describe("/api/queue/recent — integration", () => {
       expect(body.calls).toHaveLength(1);
     });
   });
+
+  describe("marcador de reset", () => {
+    it("devolve resetAt null quando o setor nunca foi resetado", async () => {
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.resetAt).toBeNull();
+    });
+
+    it("devolve resetAt em ISO após um reset", async () => {
+      const repo = await importQueueRepo();
+      await repo.resetSector("farmacia");
+
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(typeof body.resetAt).toBe("string");
+      expect(new Date(body.resetAt).toString()).not.toBe("Invalid Date");
+    });
+
+    it("o marcador muda entre resets", async () => {
+      const repo = await importQueueRepo();
+      const { GET } = await importRoute();
+
+      await repo.resetSector("farmacia");
+      const first = (await (await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" })).json()).resetAt;
+
+      await repo.resetSector("farmacia");
+      const second = (await (await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" })).json()).resetAt;
+
+      expect(new Date(second).getTime()).toBeGreaterThan(new Date(first).getTime());
+    });
+
+    it("não devolve as chamadas anteriores ao reset", async () => {
+      const repo = await importQueueRepo();
+      await repo.saveCall({
+        sector: "farmacia",
+        number: 1,
+        numberStr: "N001",
+        sequenceType: "normal",
+        callType: "normal",
+        attendantId: null,
+      });
+
+      await repo.resetSector("farmacia");
+
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+      const body = await res.json();
+
+      // A linha sobrevive no banco (o /historico continua funcionando), mas
+      // não pode voltar para a fila do monitor.
+      expect(body.calls).toEqual([]);
+      expect(body.resetAt).not.toBeNull();
+    });
+
+    it("devolve as chamadas feitas depois do reset", async () => {
+      const repo = await importQueueRepo();
+      await repo.saveCall({
+        sector: "farmacia",
+        number: 1,
+        numberStr: "N001",
+        sequenceType: "normal",
+        callType: "normal",
+        attendantId: null,
+      });
+      await repo.resetSector("farmacia");
+      await repo.saveCall({
+        sector: "farmacia",
+        number: 1,
+        numberStr: "N001",
+        sequenceType: "normal",
+        callType: "normal",
+        attendantId: null,
+      });
+
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+      const body = await res.json();
+
+      expect(body.calls).toHaveLength(1);
+    });
+  });
+
+  describe("autenticação", () => {
+    it("retorna 401 sem sessão", async () => {
+      const { auth } = await import("@/auth");
+      auth.mockResolvedValueOnce(null);
+
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+
+      expect(res.status).toBe(401);
+    });
+
+    it("atende qualquer usuário autenticado (inclusive atendente)", async () => {
+      const { auth } = await import("@/auth");
+      auth.mockResolvedValueOnce({
+        user: { id: "u1", name: "Atendente", role: "attendant" },
+      });
+
+      const { GET } = await importRoute();
+      const res = await GET({ url: "http://localhost/api/queue/recent?sector=farmacia" });
+
+      expect(res.status).toBe(200);
+    });
+  });
 });

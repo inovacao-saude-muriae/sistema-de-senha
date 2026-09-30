@@ -37,32 +37,4 @@ export class InMemoryAuthRepository {
     }
     return user.email;
   }
-
-  async login(login, password) {
-    const user = this.#users.get(login.toLowerCase());
-    if (!user || user.password !== password) {
-      const err = new Error("Credenciais inválidas");
-      err.status = 401;
-      throw err;
-    }
-    if (!user.active) {
-      const err = new Error("Usuário sem acesso ativo");
-      err.status = 403;
-      throw err;
-    }
-
-    return {
-      id: user.id,
-      name: user.full_name,
-      initials: user.full_name
-        .split(/\s+/)
-        .map((p) => p[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase(),
-      role: user.role,
-      sector: user.sector_id,
-      guiche: "none",
-    };
-  }
 }

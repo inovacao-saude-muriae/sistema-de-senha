@@ -123,6 +123,21 @@ export default function AdminPage() {
     setMessage("");
 
     try {
+      // Server first: the local replica is only dropped once the server has
+      // actually reset. Doing it the other way round left every client wiped
+      // locally while the server still had the old queue, with no rollback.
+      const res = await fetch("/api/queue/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sector: sectorId }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setMessage(data.error || "Erro ao zerar o contador no banco.");
+        return;
+      }
+
       const currentState = getQueueSnapshot();
       const next = { ...currentState };
       sectorsToReset.forEach((s) => {
@@ -135,17 +150,6 @@ export default function AdminPage() {
       });
       saveQueueState(next);
 
-      const res = await fetch("/api/queue/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sector: sectorId }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok && !data.localOnly) {
-        setMessage(data.error || "Erro ao zerar o contador no banco.");
-        return;
-      }
       setMessage(
         isAll
           ? `Todas as senhas foram resetadas. Numeração reinicia em ${MIN_QUEUE_NUMBER.toString().padStart(3, "0")}.`
@@ -301,8 +305,7 @@ export default function AdminPage() {
             <div className={styles.resetAllInfo}>
               <AlertTriangle size={16}/>
               <span>
-                Resetar todos os setores de uma vez — numeração volta para {MIN_QUEUE_NUMBER.toString().padStart(3, "0")}
-                em todos.
+                Resetar todos os setores de uma vez — numeração volta para {MIN_QUEUE_NUMBER.toString().padStart(3, "0")} em todos.
               </span>
             </div>
             <button

@@ -21,7 +21,17 @@ describe("EventManager", () => {
       manager.emitQueueCall("farmacia", call);
 
       expect(callback).toHaveBeenCalledOnce();
-      expect(callback).toHaveBeenCalledWith(call);
+      expect(callback).toHaveBeenCalledWith(call, null);
+    });
+
+    it("encaminha o marcador de reset como segundo argumento", () => {
+      const callback = vi.fn();
+      manager.subscribeToQueue("farmacia", callback);
+
+      const call = { id: "1", number: 42, type: "normal", time: "14:30" };
+      manager.emitQueueCall("farmacia", call, "2026-09-30T10:00:00.000Z");
+
+      expect(callback).toHaveBeenCalledWith(call, "2026-09-30T10:00:00.000Z");
     });
 
     it("não emite para outros setores", () => {
@@ -124,7 +134,17 @@ describe("EventManager", () => {
       manager.emitQueueRecall("farmacia", call);
 
       expect(callback).toHaveBeenCalledOnce();
-      expect(callback).toHaveBeenCalledWith(call);
+      expect(callback).toHaveBeenCalledWith(call, null);
+    });
+
+    it("encaminha o marcador de reset como segundo argumento", () => {
+      const callback = vi.fn();
+      manager.subscribeToRecall("farmacia", callback);
+
+      const call = { id: "1", number: 42, type: "normal", time: "14:30" };
+      manager.emitQueueRecall("farmacia", call, "2026-09-30T10:00:00.000Z");
+
+      expect(callback).toHaveBeenCalledWith(call, "2026-09-30T10:00:00.000Z");
     });
 
     it("não emite recall para outros setores", () => {
@@ -205,6 +225,72 @@ describe("EventManager", () => {
       manager.subscribeToRecall("farmacia", () => {});
 
       expect(manager.getRecallSubscriberCount("farmacia")).toBe(2);
+    });
+  });
+
+  describe("emitQueueReset()", () => {
+    it("emite evento de reset para o setor correto", () => {
+      const callback = vi.fn();
+      manager.subscribeToReset("farmacia", callback);
+
+      manager.emitQueueReset("farmacia", "2026-09-30T10:00:00.000Z");
+
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("2026-09-30T10:00:00.000Z");
+    });
+
+    it("não emite reset para outros setores", () => {
+      const callback = vi.fn();
+      manager.subscribeToReset("farmacia", callback);
+
+      manager.emitQueueReset("recepcao", "2026-09-30T10:00:00.000Z");
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("reset é independente de call e recall", () => {
+      const callCb = vi.fn();
+      const recallCb = vi.fn();
+      const resetCb = vi.fn();
+      manager.subscribeToQueue("farmacia", callCb);
+      manager.subscribeToRecall("farmacia", recallCb);
+      manager.subscribeToReset("farmacia", resetCb);
+
+      manager.emitQueueReset("farmacia", "2026-09-30T10:00:00.000Z");
+
+      expect(resetCb).toHaveBeenCalledOnce();
+      expect(callCb).not.toHaveBeenCalled();
+      expect(recallCb).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("subscribeToReset()", () => {
+    it("retorna uma função de unsubscribe", () => {
+      const unsub = manager.subscribeToReset("farmacia", () => {});
+      expect(typeof unsub).toBe("function");
+    });
+
+    it("após unsubscribe, não chama mais callback", () => {
+      const callback = vi.fn();
+      const unsub = manager.subscribeToReset("farmacia", callback);
+
+      unsub();
+      manager.emitQueueReset("farmacia", "2026-09-30T10:00:00.000Z");
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getResetSubscriberCount()", () => {
+    it("reflete os subscribers de reset", () => {
+      expect(manager.getResetSubscriberCount("farmacia")).toBe(0);
+
+      const unsub = manager.subscribeToReset("farmacia", () => {});
+      manager.subscribeToReset("farmacia", () => {});
+      expect(manager.getResetSubscriberCount("farmacia")).toBe(2);
+
+      unsub();
+      expect(manager.getResetSubscriberCount("farmacia")).toBe(1);
     });
   });
 

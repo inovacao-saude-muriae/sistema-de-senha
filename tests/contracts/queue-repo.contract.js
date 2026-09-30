@@ -179,5 +179,74 @@ export function queueRepoContract(createRepo) {
         expect(p.number).toBe(0);
       });
     });
+
+    describe("marcador de reset", () => {
+      async function saveOne(sector, sequenceType = "normal") {
+        const { number: num } = await repo.nextNumber(sector, sequenceType);
+        await repo.saveCall({
+          sector,
+          number: num,
+          numberStr: `N${String(num).padStart(3, "0")}`,
+          sequenceType,
+          callType: sequenceType,
+          attendantId: null,
+        });
+      }
+
+      it("getSectorResetAt() é null antes de qualquer reset", async () => {
+        expect(await repo.getSectorResetAt("farmacia")).toBeNull();
+      });
+
+      it("getSectorResetAt() devolve uma data após o reset", async () => {
+        await repo.resetSector("farmacia");
+        expect(await repo.getSectorResetAt("farmacia")).toBeInstanceOf(Date);
+      });
+
+      it("o marcador muda a cada reset", async () => {
+        await repo.resetSector("farmacia");
+        const first = await repo.getSectorResetAt("farmacia");
+        await repo.resetSector("farmacia");
+        const second = await repo.getSectorResetAt("farmacia");
+        expect(second.getTime()).toBeGreaterThan(first.getTime());
+      });
+
+      it("o marcador é independente por setor", async () => {
+        await repo.resetSector("farmacia");
+        expect(await repo.getSectorResetAt("recepcao")).toBeNull();
+      });
+
+      it("getRecentCalls() exclui as chamadas anteriores ao reset", async () => {
+        await saveOne("farmacia");
+        await saveOne("farmacia");
+        expect(await repo.getRecentCalls("farmacia", 10)).toHaveLength(2);
+
+        await repo.resetSector("farmacia");
+        const resetAt = await repo.getSectorResetAt("farmacia");
+
+        expect(await repo.getRecentCalls("farmacia", 10, resetAt)).toHaveLength(0);
+      });
+
+      it("getRecentCalls() devolve as chamadas feitas após o reset", async () => {
+        await saveOne("farmacia");
+        await repo.resetSector("farmacia");
+        const resetAt = await repo.getSectorResetAt("farmacia");
+
+        await saveOne("farmacia");
+        await saveOne("farmacia");
+
+        const calls = await repo.getRecentCalls("farmacia", 10, resetAt);
+        expect(calls).toHaveLength(2);
+        expect(calls[0].number).toBe(1); // numeração reiniciou em 000
+      });
+
+      it("sem o marcador, getRecentCalls() mantém as chamadas anteriores", async () => {
+        await saveOne("farmacia");
+        await repo.resetSector("farmacia");
+        await saveOne("farmacia");
+
+        // Sem third arg: nada é filtrado (comportamento legado, p.ex. /historico).
+        expect(await repo.getRecentCalls("farmacia", 10)).toHaveLength(2);
+      });
+    });
   });
 }

@@ -12,6 +12,8 @@ const describeIfPostgres = isPostgresReady ? describe : describe.skip;
 async function cleanupQueueTestData() {
   await prisma.queue_calls.deleteMany();
   await prisma.queue_sequences.deleteMany();
+  // Clear only the marker — `sectors` rows are seeded and referenced by FKs.
+  await prisma.sectors.updateMany({ data: { reset_at: null } });
 }
 
 describeIfPostgres("QueueRepository — Postgres integration", () => {

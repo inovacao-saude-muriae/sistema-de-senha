@@ -121,6 +121,9 @@ export async function seedTestQueueSequence(sector, type, currentNumber) {
 export async function cleanupQueueTestData() {
   await prisma.queue_calls.deleteMany();
   await prisma.queue_sequences.deleteMany();
+  // The sector rows themselves are seeded and referenced by FKs — only the
+  // reset marker is cleared, so tests start with "never reset".
+  await prisma.sectors.updateMany({ data: { reset_at: null } });
 }
 
 export { prisma };

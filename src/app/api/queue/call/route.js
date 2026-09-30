@@ -53,7 +53,9 @@ export async function POST(request) {
       attendantId,
     });
 
-    // Emit realtime event for monitors
+    // Emit realtime event for monitors, stamped with the sector's reset marker
+    // so clients can tell whether their local replica predates a reset.
+    const resetAt = await queue.getSectorResetAt(sector);
     const callEvent = {
       id: saved.id,
       number: nextNum,
@@ -64,7 +66,11 @@ export async function POST(request) {
         minute: "2-digit",
       }).format(new Date()),
     };
-    eventManager.emitQueueCall(sector, callEvent);
+    eventManager.emitQueueCall(
+      sector,
+      callEvent,
+      resetAt ? resetAt.toISOString() : null,
+    );
 
     return NextResponse.json({
       success: true,

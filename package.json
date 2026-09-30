@@ -1,6 +1,6 @@
 {
-  "name": "sistemadesenha",
-  "version": "0.1.0",
+  "name": "sistema-de-senha",
+  "version": "0.2.0",
   "private": true,
   "main": "main.js",
   "scripts": {

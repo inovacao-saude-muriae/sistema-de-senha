@@ -43,6 +43,10 @@ model sectors {
   id             String          @id
   name           String
   created_at     DateTime?       @default(now()) @db.Timestamptz(6)
+  // Marcador de reset da fila do setor. Os clientes comparam este valor com o
+  // último que viram para invalidar a réplica local quando o reset acontece em
+  // outro dispositivo. Também delimita quais queue_calls são pós-reset.
+  reset_at       DateTime?       @db.Timestamptz(6)
   users          users[]
   queue_calls    queue_calls[]
 }

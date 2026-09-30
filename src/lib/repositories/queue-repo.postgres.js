@@ -114,20 +114,48 @@ export class QueueRepository {
   }
 
   /**
+   * Get the reset marker for a sector.
+   * Clients compare this value against the last one they saw to know the queue
+   * was reset elsewhere and their local replica must be invalidated.
+   * Returns null when the sector was never reset.
+   * @param {'farmacia'|'recepcao'} sector
+   * @returns {Promise<Date|null>}
+   */
+  async getSectorResetAt(sector) {
+    const row = await prisma.sectors.findUnique({
+      where: { id: sector },
+      select: { reset_at: true },
+    });
+    return row?.reset_at ?? null;
+  }
+
+  /**
    * Reset sequence for sector.
-   * Sets counter to -1 so the next call returns 0 (first password = 000).
+   * Sets counter to -1 so the next call returns 0 (first password = 000), and
+   * stamps the sector's reset marker so clients can detect the reset.
+   * `queue_calls` rows are intentionally kept: `/historico` reads them.
    * @param {'farmacia'|'recepcao'} sector
    * @returns {Promise<void>}
    */
   async resetSector(sector) {
+    const now = new Date();
+
     await prisma.queue_sequences.updateMany({
       where: {
         sector_id: sector,
       },
       data: {
         current_number: MIN_QUEUE_NUMBER - 1,
-        updated_at: new Date(),
+        updated_at: now,
       },
+    });
+
+    // The marker lives on `sectors` (not `queue_sequences`) because the
+    // updateMany above only touches existing rows — a sector that never had a
+    // call would leave no row to stamp, making the reset undetectable.
+    await prisma.sectors.updateMany({
+      where: { id: sector },
+      data: { reset_at: now },
     });
   }
 
@@ -171,21 +199,27 @@ export class QueueRepository {
 
   /**
    * Get recent calls for a sector (for monitor history)
+   * When `resetAt` is given, calls made before the reset are excluded — those
+   * rows survive the reset (so `/historico` keeps working) but must never be
+   * replayed into a monitor's queue.
    * @param {'farmacia'|'recepcao'} sector
    * @param {number} limit
+   * @param {Date|null} [resetAt]
    * @returns {Promise<Array<{
    *   id: string,
    *   number: number,
    *   type: string,
-   *   time: string
+   *   time: string,
+   *   createdAt: string|null
    * }>>}
    */
-  async getRecentCalls(sector, limit = DEFAULT_RECENT_LIMIT) {
+  async getRecentCalls(sector, limit = DEFAULT_RECENT_LIMIT, resetAt = null) {
     try {
+      const where = { sector_id: sector };
+      if (resetAt) where.created_at = { gte: resetAt };
+
       const calls = await prisma.queue_calls.findMany({
-        where: {
-          sector_id: sector,
-        },
+        where,
         orderBy: {
           created_at: "desc",
         },
@@ -206,6 +240,12 @@ export class QueueRepository {
             ? "preferencial"
             : "normal",
         time: formatTime(new Date(call.created_at || Date.now())),
+        // `time` is HH:mm with no date, so a client could not tell a call it
+        // just received from one made yesterday. The consumer needs that to
+        // honour its own daily history rollover.
+        createdAt: call.created_at
+          ? new Date(call.created_at).toISOString()
+          : null,
       }));
     } catch {
       return [];

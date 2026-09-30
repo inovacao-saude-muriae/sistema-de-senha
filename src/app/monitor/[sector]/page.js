@@ -12,8 +12,10 @@ import {
 import { Clock3 } from "lucide-react";
 import {
   callNextNumber,
+  cleanHistory,
   getQueueSnapshot,
   normalizeQueue,
+  reconcileQueueFromCalls,
   saveQueueState,
   subscribeQueue,
 } from "../../../lib/queue";
@@ -56,19 +58,6 @@ function subscribeNews(cb) {
 function formatMonitorNumber(number) {
   if (number === null || number === undefined) return "---";
   return String(Number(number)).padStart(3, "0");
-}
-
-function cleanHistory(history = []) {
-  if (!Array.isArray(history)) return [];
-  const seen = new Set();
-  return history.filter((item) => {
-    if (item?.number == null) return false;
-    // Deduplica por número+tipo (ignora id pois itens locais não têm id ainda)
-    const key = `${item.number}-${item.type}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 /* ─── carrossel de notícias isolado (evita re-render da voz) ─── */
@@ -151,7 +140,7 @@ export default function MonitorPage({ params }) {
   );
 
   // Realtime events via SSE with polling fallback
-  const { connected, lastCall } = useQueueEvents(sector);
+  const { calls, lastCall } = useQueueEvents(sector);
 
   const { timeString, dateString } = useServerClock();
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -192,12 +181,6 @@ export default function MonitorPage({ params }) {
     const prev = getQueueSnapshot() || monitorServerSnapshot;
     const queue = prev[sector] || {};
 
-    // Skip stale initial fetch when queue is in "no password" state (post-reset).
-    // Initial calls from the API are old DB rows that were not cleared on reset.
-    if (lastCall._source === "initial" && queue.normalCurrent === NO_PASSWORD && queue.priorityCurrent === NO_PASSWORD) {
-      return;
-    }
-
     const callType = lastCall.type === CALL_TYPES.PREFERENCIAL ? CALL_TYPES.PREFERENCIAL : CALL_TYPES.NORMAL;
     const field = callType === CALL_TYPES.PREFERENCIAL ? TYPE_FIELDS.preferencial : TYPE_FIELDS.normal;
 
@@ -220,6 +203,19 @@ export default function MonitorPage({ params }) {
 
     monitorSpeak(lastCall.number, callType);
   }, [lastCall, sector, audioEnabled]);
+
+  /*
+   * Reconcile against the server's portrait — the monitor has no fetch of its
+   * own, so this is how it restores history after a reload.
+   *
+   * Deliberately declared *after* the live effect and deliberately silent: it
+   * must never reach `monitorSpeak`, or a monitor reboot would announce an old
+   * password. Idempotent, so re-running it on every snapshot change is safe.
+   */
+  useEffect(() => {
+    if (!sector || calls == null) return;
+    reconcileQueueFromCalls(sector, calls, { historyLimit: HISTORY_LIMITS.monitor });
+  }, [calls, sector]);
 
   /* ─── chamar próxima senha (via teclado / passador) ─── */
   const callNext = useCallback(async (type) => {

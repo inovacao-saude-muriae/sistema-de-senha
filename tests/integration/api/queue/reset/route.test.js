@@ -4,6 +4,7 @@ import {
   seedTestQueueSequence,
   prisma,
 } from "../../../postgres-setup.js";
+import { eventManager } from "@/lib/event-manager";
 
 async function importRoute() {
   return import("@/app/api/queue/reset/route.js");
@@ -89,6 +90,69 @@ describe("/api/queue/reset — integration", () => {
       const body = await res.json();
 
       expect(body).toEqual({ success: true, sectors: ["farmacia"] });
+    });
+
+    it("grava o marcador de reset no setor", async () => {
+      const { POST } = await importRoute();
+      await POST({ json: () => Promise.resolve({ sector: "farmacia" }) });
+
+      const sector = await prisma.sectors.findUnique({
+        where: { id: "farmacia" },
+        select: { reset_at: true },
+      });
+      expect(sector.reset_at).toBeInstanceOf(Date);
+    });
+
+    it("emite evento de reset para os assinantes do setor", async () => {
+      const { POST } = await importRoute();
+
+      let received = null;
+      const unsubscribe = eventManager.subscribeToReset("farmacia", (resetAt) => {
+        received = resetAt;
+      });
+
+      try {
+        await POST({ json: () => Promise.resolve({ sector: "farmacia" }) });
+
+        expect(received).not.toBeNull();
+        expect(typeof received).toBe("string");
+        expect(new Date(received).toString()).not.toBe("Invalid Date");
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    it("'all' emite reset em cada setor", async () => {
+      const { POST } = await importRoute();
+
+      const seen = [];
+      const unsubF = eventManager.subscribeToReset("farmacia", (at) => seen.push(["farmacia", at]));
+      const unsubR = eventManager.subscribeToReset("recepcao", (at) => seen.push(["recepcao", at]));
+
+      try {
+        await POST({ json: () => Promise.resolve({ sector: "all" }) });
+
+        expect(seen.map(([s]) => s).sort()).toEqual(["farmacia", "recepcao"]);
+      } finally {
+        unsubF();
+        unsubR();
+      }
+    });
+
+    it("não emite quando a requisição é rejeitada", async () => {
+      const { POST } = await importRoute();
+
+      let called = false;
+      const unsubscribe = eventManager.subscribeToReset("farmacia", () => {
+        called = true;
+      });
+
+      try {
+        await POST({ json: () => Promise.resolve({ sector: "invalido" }) });
+        expect(called).toBe(false);
+      } finally {
+        unsubscribe();
+      }
     });
   });
 });

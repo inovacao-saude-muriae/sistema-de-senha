@@ -256,14 +256,14 @@ export function registerMonitorSpeaker() {
 
 export function isMonitorSpeakerActive() { return isMonitorSpeaker; }
 
-// Chamado pelo monitor via Supabase Realtime — único ponto de fala de senhas
+// Chamado pelo monitor a partir dos eventos SSE — único ponto de fala de senhas
 export function monitorSpeak(number, type) {
   const text = buildSpeechText(number, type);
   const key  = `${Number(number)}-${type}`;
   speakWithAlert(text, key);
 }
 
-// No-op — dashboard não fala; monitor fala via Realtime
+// No-op — dashboard não fala; monitor fala via SSE
 export function announceQueueCall(_number, _type) {}
 
 // "Chamar novamente" — força repetição ignorando dedup

@@ -12,6 +12,7 @@ import {
   TYPE_LABELS,
   TYPE_PREFIXES,
   DEFAULT_QUEUE_NUMBER,
+  HISTORY_LIMITS,
   NO_PASSWORD,
 } from "./constants.js";
 
@@ -142,19 +143,169 @@ export function saveQueueState(state) {
   window.dispatchEvent(new CustomEvent("queue-updated", { detail: state }));
 }
 
-// Limpa apenas as chamadas visíveis no monitor mantendo os contadores intactos
-export function clearMonitorHistory(sector) {
-  const state = readQueueState();
-  if (state[sector]) {
-    const updated = {
-      ...state,
-      [sector]: {
-        ...state[sector],
-        history: [],
-      },
+/**
+ * Drop a sector's queue back to "no current password" — used when the server
+ * queue is reset from another device, which localStorage cannot observe.
+ *
+ * Deliberately writes through `saveQueueState` instead of calling
+ * `localStorage.removeItem`:
+ *   1. the `storage` event only fires in *other* tabs, so this tab needs
+ *      `queue-updated` to converge;
+ *   2. `getQueueSnapshot` memoizes on `clientQueueRaw` and would otherwise hand
+ *      back stale data even with the key gone;
+ *   3. `subscribeQueue` listens to `queue-updated` and `storage` only.
+ *
+ * @param {string|null} [sector] single sector, or null for every sector
+ */
+export function invalidateQueueState(sector = null) {
+  clientQueueRaw = null;
+  clientQueueSnapshot = null;
+  hasClientQueueSnapshot = false;
+
+  const current = readQueueState();
+  const targets =
+    sector && Object.hasOwn(SECTORS, sector) ? [sector] : Object.keys(SECTORS);
+
+  const next = { ...current };
+  for (const s of targets) {
+    next[s] = {
+      ...normalizeQueue(current[s]),
+      normalCurrent: NO_PASSWORD,
+      priorityCurrent: NO_PASSWORD,
+      history: [],
+      historyDate: localDateKey(),
     };
-    saveQueueState(updated);
   }
+
+  saveQueueState(next);
+}
+
+/**
+ * Drop malformed entries and deduplicate by number+type.
+ *
+ * Locally created items have no `id`, so the id cannot take part in the key.
+ * Keeps the *first* occurrence — passing newest-first keeps newest-first.
+ *
+ * @param {Array<{number:number|string, type:string}>} history
+ * @returns {Array}
+ */
+export function cleanHistory(history = []) {
+  if (!Array.isArray(history)) return [];
+  const seen = new Set();
+  return history.filter((item) => {
+    if (item?.number == null) return false;
+    const key = `${item.number}-${item.type}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function historyKey(call) {
+  return `${call?.number}-${call?.type}`;
+}
+
+/**
+ * Local day of an ISO timestamp, in the same format as `localDateKey`.
+ *
+ * Comparing `createdAt.slice(0, 10)` would use UTC: a call placed at 22:00 in
+ * UTC-3 belongs to tomorrow on the wire, and would be dropped as "tomorrow's".
+ */
+function localDayKey(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** Canonical call shape — the API has emitted both spellings of "preferential". */
+function normalizeCalls(calls) {
+  if (!Array.isArray(calls)) return [];
+  return calls
+    .filter((call) => call?.number != null)
+    .map((call) => ({
+      ...call,
+      type:
+        call.type === CALL_TYPES.PREFERENCIAL || call.type === CALL_TYPES.PREFERENTIAL
+          ? CALL_TYPES.PREFERENCIAL
+          : CALL_TYPES.NORMAL,
+    }));
+}
+
+/**
+ * Make a sector's local replica agree with the server's post-reset call list.
+ *
+ * This is the *portrait* path: idempotent, safe to run on every mount and on
+ * every snapshot change, and it never announces anything — unlike the live
+ * `lastCall` path, which is what makes a monitor speak.
+ *
+ * Three rules:
+ *
+ *   1. empty list → the sector has no calls since its reset, so anything local
+ *      is pre-reset residue and gets dropped. This is the branch that keeps
+ *      `---` on screen after a reset performed on another device.
+ *   2. non-empty but every call predates today → nothing to do. The daily
+ *      rollover (`clearHistoryFromNewDay`) deliberately clears the visual
+ *      history while keeping the counters, and `getRecentCalls` filters by
+ *      `reset_at`, not by day — writing the server's list here would resurrect
+ *      yesterday's history.
+ *   3. otherwise → adopt `todays[0]` as the current password **only** when it
+ *      is absent from the local history. See the race guard below.
+ *
+ * The race guard: `callNextNumber` writes the number to `localStorage` before
+ * the server confirms it (see `saveQueueState` just above), so a portrait that
+ * predates the commit would otherwise revert the call the user just made. If
+ * the portrait already contains `calls[0]`, this client knows that call —
+ * whatever is newest is the password it just wrote, not the portrait.
+ *
+ * History is *merged*, never replaced, and monotonically so: an entry already
+ * applied locally can only disappear if the server says it is pre-reset, which
+ * case 1 handles.
+ *
+ * @param {string} sector
+ * @param {Array} calls newest-first, already filtered by `reset_at`
+ * @param {{ historyLimit?: number }} [options]
+ */
+export function reconcileQueueFromCalls(
+  sector,
+  calls,
+  { historyLimit = HISTORY_LIMITS.painel } = {},
+) {
+  if (!sector || !Object.hasOwn(SECTORS, sector)) return;
+
+  const server = normalizeCalls(calls);
+  const current = readQueueState();
+  const local = normalizeQueue(current[sector]);
+
+  if (server.length === 0) {
+    const clean =
+      local.normalCurrent === NO_PASSWORD &&
+      local.priorityCurrent === NO_PASSWORD &&
+      local.history.length === 0;
+    if (clean) return; // already `---`: no point waking every subscriber up
+    invalidateQueueState(sector);
+    return;
+  }
+
+  // Entries without a date are kept: payloads predating this field (and the
+  // tests that build calls by hand) must not silently fall into case 2.
+  const todays = server.filter(
+    (call) => !call.createdAt || localDayKey(call.createdAt) === localDateKey(),
+  );
+  if (todays.length === 0) return; // case 2
+
+  const newest = todays[0];
+  const known = new Set(local.history.map(historyKey));
+  const adopt = !known.has(historyKey(newest));
+  const field = TYPE_FIELDS[newest.type] ?? TYPE_FIELDS.normal;
+
+  saveQueueState({
+    ...current,
+    [sector]: {
+      ...local,
+      [field]: adopt ? newest.number : local[field],
+      history: cleanHistory([...todays, ...local.history]).slice(0, historyLimit),
+    },
+  });
 }
 
 export function readSession() {

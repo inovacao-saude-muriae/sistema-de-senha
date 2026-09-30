@@ -1,20 +1,18 @@
 import { NextResponse } from "next/server";
 import { queue } from "@/lib/repositories";
-import { eventManager } from "@/lib/event-manager";
 import { formatNumberString, normalizeCallType } from "@/lib/repositories/utils";
-import { auth } from "@/auth";
+import { requireRole } from "@/lib/api-auth";
 import { SECTORS, MIN_QUEUE_NUMBER, MAX_QUEUE_NUMBER } from "@/lib/constants.js";
 
 /* ─────────────────────────────────────────────────
    POST — sincroniza a fila para um número específico
    Body: { sector, type, nextNumber }
+   Restrito a administradores: fixa a numeração de toda a fila do setor.
 ───────────────────────────────────────────────── */
 export async function POST(request) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { error } = await requireRole();
+    if (error) return error;
 
     const body = await request.json();
     const { sector, type, nextNumber } = body;

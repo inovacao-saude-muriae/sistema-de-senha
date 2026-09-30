@@ -138,6 +138,41 @@ describe("/api/queue/call — integration", () => {
         unsubscribe();
       }
     });
+
+    it("o evento carrega o marcador de reset do setor", async () => {
+      let receivedResetAt;
+      const unsubscribe = eventManager.subscribeToQueue(
+        "farmacia",
+        (_call, resetAt) => {
+          receivedResetAt = resetAt;
+        },
+      );
+
+      try {
+        // Setor nunca resetado → marcador nulo.
+        const { POST } = await importRoute();
+        await POST({
+          json: () =>
+            Promise.resolve({ sector: "farmacia", type: "normal", attendantId: null }),
+        });
+        expect(receivedResetAt).toBeNull();
+
+        // Após um reset, o evento deve carregar o novo marcador para que o
+        // cliente consiga invalidar a réplica local.
+        const repo = await importQueueRepo();
+        await repo.resetSector("farmacia");
+
+        await POST({
+          json: () =>
+            Promise.resolve({ sector: "farmacia", type: "normal", attendantId: null }),
+        });
+
+        expect(typeof receivedResetAt).toBe("string");
+        expect(new Date(receivedResetAt).toString()).not.toBe("Invalid Date");
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   describe("fluxo completo", () => {

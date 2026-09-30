@@ -25,7 +25,10 @@ export async function POST(request) {
       );
     }
 
-    const calls = await queue.getRecentCalls(sector, 1);
+    const resetAt = await queue.getSectorResetAt(sector);
+    // Only calls made after the last reset are repeatable — the rows from
+    // before it survive for /historico but no longer belong to the live queue.
+    const calls = await queue.getRecentCalls(sector, 1, resetAt);
     if (!calls.length) {
       return NextResponse.json(
         { error: "Nenhuma senha anterior para repetir." },
@@ -45,7 +48,11 @@ export async function POST(request) {
       }).format(new Date()),
     };
 
-    eventManager.emitQueueRecall(sector, callEvent);
+    eventManager.emitQueueRecall(
+      sector,
+      callEvent,
+      resetAt ? resetAt.toISOString() : null,
+    );
 
     return NextResponse.json({
       success: true,

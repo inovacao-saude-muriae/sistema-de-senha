@@ -20,7 +20,7 @@ describe("Monitor page — audio on SSE events", () => {
     expect(monitorCode).not.toMatch(/if\s*\(\s*audioEnabledRef\.current\s*\)\s*\{?\s*\n?\s*monitorSpeak/);
   });
 
-  it("ainda possui机制 de unlock para beep (AudioContext)", () => {
+  it("ainda possui mecanismo de unlock para beep (AudioContext)", () => {
     expect(monitorCode).toMatch(/unlockSpeech/);
     expect(monitorCode).toMatch(/audioEnabled/);
   });
@@ -57,5 +57,56 @@ describe("Monitor page — audio on SSE events", () => {
 
   it("importa forceAnnounce de speech.js", () => {
     expect(monitorCode).toMatch(/forceAnnounce/);
+  });
+});
+
+describe("Monitor page — retrato x evento", () => {
+  /**
+   * Delimita o effect que chama `reconcileQueueFromCalls`, em vez de partir do
+   * primeiro `useEffect` do arquivo — o span atravessaria o effect ao vivo e
+   * encontraria `monitorSpeak` fora do escopo.
+   */
+  function reconcileEffect() {
+    const callAt = monitorCode.indexOf("reconcileQueueFromCalls(");
+    if (callAt === -1) return null;
+    const start = monitorCode.lastIndexOf("useEffect(", callAt);
+    const end = monitorCode.indexOf("]);", callAt);
+    if (start === -1 || end === -1) return null;
+    return monitorCode.slice(start, end + "]);".length);
+  }
+
+  it("possui um effect de reconciliação sobre o retrato (calls)", () => {
+    const effect = reconcileEffect();
+    expect(effect).toBeTruthy();
+    expect(effect).toMatch(/HISTORY_LIMITS\.monitor/);
+    expect(effect).toMatch(/\[calls, sector\]/);
+  });
+
+  it("o effect de reconciliação NÃO fala — recarregar não anuncia senha antiga", () => {
+    const effect = reconcileEffect();
+    expect(effect).toBeTruthy();
+    expect(effect).not.toMatch(/monitorSpeak/);
+    expect(effect).not.toMatch(/forceAnnounce/);
+  });
+
+  it("monitorSpeak é chamado uma única vez, no effect de lastCall", () => {
+    // O import não termina em `(`, então só a chamada conta.
+    expect(monitorCode.match(/monitorSpeak\(/g)).toHaveLength(1);
+    expect(monitorCode).toMatch(/monitorSpeak\(lastCall\.number/);
+  });
+
+  it("declara o effect de reconciliação depois do de lastCall", () => {
+    // Mantém estável o match do teste "chama monitorSpeak ao receber lastCall",
+    // que parte do primeiro useEffect do arquivo.
+    const liveEnd = monitorCode.indexOf("}, [lastCall, sector, audioEnabled]");
+    const reconcileStart = monitorCode.indexOf("reconcileQueueFromCalls(");
+
+    expect(liveEnd).toBeGreaterThan(-1);
+    expect(reconcileStart).toBeGreaterThan(liveEnd);
+  });
+
+  it("não busca o histórico por conta própria — vem do singleton", () => {
+    expect(monitorCode).not.toMatch(/fetch\([^)]*QUEUE_RECENT/);
+    expect(monitorCode).not.toMatch(/\/api\/queue\/recent/);
   });
 });

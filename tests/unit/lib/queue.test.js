@@ -9,10 +9,12 @@ import {
   getInitialState,
   readQueueState,
   saveQueueState,
-  clearMonitorHistory,
+  invalidateQueueState,
   readSession,
   normalizeQueue,
   clearHistoryFromNewDay,
+  cleanHistory,
+  reconcileQueueFromCalls,
   subscribeQueue,
   withQueueLock,
   getQueueSnapshot,
@@ -115,7 +117,7 @@ describe("normalizeQueue", () => {
   });
 });
 
-describe("readQueueState / saveQueueState / clearMonitorHistory", () => {
+describe("readQueueState / saveQueueState / invalidateQueueState", () => {
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
@@ -143,16 +145,105 @@ describe("readQueueState / saveQueueState / clearMonitorHistory", () => {
     spy.mockRestore();
   });
 
-  it("limpa apenas o histórico do setor mantendo contadores", () => {
+  it("invalidateQueueState zera o setor indicado", () => {
     const state = getInitialState();
     state.farmacia.normalCurrent = 10;
+    state.farmacia.priorityCurrent = 7;
     state.farmacia.history = [{ number: 10, type: "normal" }];
+    state.recepcao.normalCurrent = 22;
+    state.recepcao.history = [{ number: 22, type: "normal" }];
     saveQueueState(state);
 
-    clearMonitorHistory("farmacia");
+    invalidateQueueState("farmacia");
     const read = readQueueState();
-    expect(read.farmacia.normalCurrent).toBe(10);
+
+    expect(read.farmacia.normalCurrent).toBeNull();
+    expect(read.farmacia.priorityCurrent).toBeNull();
     expect(read.farmacia.history).toEqual([]);
+    // Outros setores não são tocados.
+    expect(read.recepcao.normalCurrent).toBe(22);
+    expect(read.recepcao.history).toHaveLength(1);
+  });
+
+  it("invalidateQueueState sem setor zera todos", () => {
+    const state = getInitialState();
+    state.farmacia.normalCurrent = 10;
+    state.recepcao.normalCurrent = 22;
+    saveQueueState(state);
+
+    invalidateQueueState();
+    const read = readQueueState();
+
+    expect(read.farmacia.normalCurrent).toBeNull();
+    expect(read.recepcao.normalCurrent).toBeNull();
+  });
+
+  it("invalidateQueueState mantém o '---' (NO_PASSWORD) em ambos os campos", () => {
+    saveQueueState({
+      ...getInitialState(),
+      farmacia: {
+        normalCurrent: 10,
+        priorityCurrent: 3,
+        history: [{ number: 10, type: "normal" }],
+      },
+    });
+
+    invalidateQueueState("farmacia");
+    const q = normalizeQueue(readQueueState().farmacia);
+
+    // `---` na UI vem de `normalCurrent === NO_PASSWORD` (o formatador do
+    // monitor, `formatMonitorNumber`, devolve "---" para null). Abreviado
+    // aqui: N- é o prefixo de `formatQueueNumber`, não o placeholder da tela.
+    expect(q.normalCurrent).toBe(NO_PASSWORD);
+    expect(q.priorityCurrent).toBe(NO_PASSWORD);
+    expect(formatQueueNumber(q.normalCurrent, "normal")).toBe("N---");
+  });
+
+  it("invalidateQueueState invalida o memo do snapshot", () => {
+    const state = getInitialState();
+    state.farmacia.normalCurrent = 10;
+    saveQueueState(state);
+
+    // Memoriza com normalCurrent = 10.
+    expect(getQueueSnapshot().farmacia.normalCurrent).toBe(10);
+
+    invalidateQueueState("farmacia");
+
+    // Sem a limpeza do memo, isto devolveria o snapshot antigo.
+    expect(getQueueSnapshot().farmacia.normalCurrent).toBeNull();
+  });
+
+  it("invalidateQueueState emite 'queue-updated' para a própria aba", () => {
+    saveQueueState(getInitialState());
+    const spy = vi.spyOn(window, "dispatchEvent");
+
+    invalidateQueueState("farmacia");
+
+    const events = spy.mock.calls.map((c) => c[0].type);
+    expect(events).toContain("queue-updated");
+    spy.mockRestore();
+  });
+
+  it("invalidateQueueState escreve a chave (outras abas recebem 'storage')", () => {
+    saveQueueState(getInitialState());
+    invalidateQueueState("farmacia");
+
+    // A chave precisa continuar existindo para que a leitura das outras abas
+    // não caia num estado vazio.
+    expect(window.localStorage.getItem(QUEUE_KEY)).not.toBeNull();
+  });
+
+  it("ignora setor desconhecido e zera todos", () => {
+    const state = getInitialState();
+    state.farmacia.normalCurrent = 10;
+    state.recepcao.normalCurrent = 22;
+    saveQueueState(state);
+
+    invalidateQueueState("setor-inexistente");
+    const read = readQueueState();
+
+    expect(read.farmacia.normalCurrent).toBeNull();
+    expect(read.recepcao.normalCurrent).toBeNull();
   });
 });
 
@@ -292,5 +383,241 @@ describe("getQueueSnapshot / getSessionSnapshot (cache)", () => {
     const unsub = subscribeSession(() => {});
     expect(typeof unsub).toBe("function");
     unsub();
+  });
+});
+
+const call = (number, type = "normal", time = "14:30") => ({ number, type, time });
+
+/** Espelha o `localDateKey` (module-private) de `queue.js`. */
+function dayKey(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Instante ISO numa hora LOCAL do dia pedido — o dia gravado é o dia local. */
+function isoLocal(offsetDays = 0, hour = 12, minute = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  d.setHours(hour, minute, 0, 0);
+  return d.toISOString();
+}
+
+function seedSector(sector, { normalCurrent = null, priorityCurrent = null, history = [] } = {}) {
+  const state = getInitialState();
+  state[sector] = { ...state[sector], normalCurrent, priorityCurrent, history };
+  saveQueueState(state);
+  return state;
+}
+
+describe("cleanHistory", () => {
+  it("devolve [] para entrada não-array", () => {
+    expect(cleanHistory(undefined)).toEqual([]);
+    expect(cleanHistory("nada")).toEqual([]);
+  });
+
+  it("remove entradas sem número", () => {
+    expect(cleanHistory([{ number: null }, call(42)])).toEqual([call(42)]);
+  });
+
+  it("deduplica por número+tipo, mantendo a primeira ocorrência", () => {
+    const history = [call(42), call(41), call(42)];
+    expect(cleanHistory(history)).toEqual([call(42), call(41)]);
+  });
+
+  it("não deduplica números iguais de tipos diferentes", () => {
+    const history = [call(42, "normal"), call(42, "preferencial")];
+    expect(cleanHistory(history)).toHaveLength(2);
+  });
+});
+
+describe("reconcileQueueFromCalls", () => {
+  it("retrato vazio zera a senha atual e o histórico", () => {
+    seedSector("farmacia", { normalCurrent: 42, history: [call(42)] });
+
+    reconcileQueueFromCalls("farmacia", []);
+
+    const state = readQueueState().farmacia;
+    expect(state.normalCurrent).toBeNull();
+    expect(state.priorityCurrent).toBeNull();
+    expect(state.history).toEqual([]);
+  });
+
+  it("retrato vazio já limpo é no-op — não acorda quem está escutando", () => {
+    const listener = vi.fn();
+    window.addEventListener("queue-updated", listener);
+
+    reconcileQueueFromCalls("farmacia", []);
+
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("queue-updated", listener);
+  });
+
+  it("adota a chamada mais nova como senha atual", () => {
+    reconcileQueueFromCalls("farmacia", [call(40), call(39)]);
+
+    const state = readQueueState().farmacia;
+    expect(state.normalCurrent).toBe(40);
+    expect(state.history).toHaveLength(2);
+  });
+
+  it("guarda de corrida: não regride quando o retrato já contém calls[0]", () => {
+    // `callNextNumber` grava a senha atual ANTES de o servidor confirmar.
+    seedSector("farmacia", { normalCurrent: 43, history: [call(42)] });
+
+    // Retrato que partiu antes do commit: ainda não sabe da 43.
+    reconcileQueueFromCalls("farmacia", [call(42), call(41)]);
+
+    // Sem a guarda, `normalCurrent` voltaria 43 → 42.
+    expect(readQueueState().farmacia.normalCurrent).toBe(43);
+    // O histórico, sim, é reconciliado.
+    expect(readQueueState().farmacia.history).toHaveLength(2);
+  });
+
+  it("adota quando outro dispositivo chamou mais novo", () => {
+    seedSector("farmacia", { normalCurrent: 42, history: [call(42)] });
+
+    reconcileQueueFromCalls("farmacia", [call(44), call(43), call(42)]);
+
+    expect(readQueueState().farmacia.normalCurrent).toBe(44);
+  });
+
+  it("é idempotente — aplicar duas vezes é igual a aplicar uma", () => {
+    const calls = [call(44), call(43)];
+
+    reconcileQueueFromCalls("farmacia", calls);
+    const first = readQueueState().farmacia;
+
+    reconcileQueueFromCalls("farmacia", calls);
+    const second = readQueueState().farmacia;
+
+    expect(second).toEqual(first);
+    expect(second.normalCurrent).toBe(44);
+  });
+
+  it("não toca o outro setor", () => {
+    seedSector("farmacia");
+    seedSector("recepcao", { normalCurrent: 77, history: [call(77)] });
+
+    reconcileQueueFromCalls("farmacia", [call(40)]);
+
+    expect(readQueueState().recepcao.normalCurrent).toBe(77);
+    expect(readQueueState().recepcao.history).toHaveLength(1);
+  });
+
+  it("respeita historyLimit", () => {
+    const calls = Array.from({ length: 10 }, (_, i) => call(50 - i));
+
+    reconcileQueueFromCalls("farmacia", calls, { historyLimit: 3 });
+
+    expect(readQueueState().farmacia.history).toHaveLength(3);
+    expect(readQueueState().farmacia.history[0].number).toBe(50);
+  });
+
+  it("normaliza 'preferential' para 'preferencial'", () => {
+    reconcileQueueFromCalls("farmacia", [
+      { number: 5, type: "preferential", time: "14:30" },
+    ]);
+
+    const state = readQueueState().farmacia;
+    expect(state.priorityCurrent).toBe(5);
+    expect(state.normalCurrent).toBeNull();
+    expect(state.history[0].type).toBe("preferencial");
+  });
+
+  it("funde em vez de substituir — preserva entrada local ausente do servidor", () => {
+    seedSector("farmacia", { normalCurrent: 43, history: [call(43), call(42)] });
+
+    reconcileQueueFromCalls("farmacia", [call(42)]);
+
+    expect(readQueueState().farmacia.history.map((h) => h.number)).toContain(43);
+  });
+
+  it("invalida o memo do getQueueSnapshot", () => {
+    seedSector("farmacia", { normalCurrent: 42, history: [call(42)] });
+    expect(getQueueSnapshot().farmacia.normalCurrent).toBe(42);
+
+    reconcileQueueFromCalls("farmacia", []);
+
+    expect(getQueueSnapshot().farmacia.normalCurrent).toBeNull();
+  });
+
+  it("ignora setor desconhecido", () => {
+    const listener = vi.fn();
+    window.addEventListener("queue-updated", listener);
+
+    reconcileQueueFromCalls("inexistente", [call(40)]);
+
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("queue-updated", listener);
+  });
+
+  it("aceita um retrato ausente (undefined) como vazio", () => {
+    seedSector("farmacia", { normalCurrent: 42, history: [call(42)] });
+
+    reconcileQueueFromCalls("farmacia", undefined);
+
+    expect(readQueueState().farmacia.normalCurrent).toBeNull();
+  });
+
+  it("não ressuscita o histórico de ontem após a virada do dia", () => {
+    const state = getInitialState();
+    state.farmacia = {
+      ...state.farmacia,
+      normalCurrent: 40,
+      history: [call(40)],
+      historyDate: dayKey(-1),
+    };
+    saveQueueState(state);
+
+    // O retrato do servidor ainda traz as chamadas de ontem: `getRecentCalls`
+    // filtra por `reset_at`, não por dia.
+    reconcileQueueFromCalls("farmacia", [
+      { ...call(40), createdAt: isoLocal(-1, 14, 30) },
+      { ...call(39), createdAt: isoLocal(-1, 14, 0) },
+    ]);
+
+    // `clearHistoryFromNewDay` limpa só o histórico e PRESERVA os contadores.
+    // Ressuscitar o histórico de ontem desfaria essa decisão.
+    expect(readQueueState().farmacia.history).toEqual([]);
+    expect(readQueueState().farmacia.normalCurrent).toBe(40);
+  });
+
+  it("atravessando a meia-noite ligado, mantém só as chamadas de hoje", () => {
+    const state = getInitialState();
+    state.farmacia = {
+      ...state.farmacia,
+      normalCurrent: 40,
+      history: [call(40)],
+      historyDate: dayKey(-1),
+    };
+    saveQueueState(state);
+
+    // Chegou a primeira chamada do dia por SSE — o retrato agora traz o dia
+    // novo e as de ontem (`getRecentCalls` filtra por `reset_at`).
+    reconcileQueueFromCalls("farmacia", [
+      { ...call(41), createdAt: isoLocal(0, 12) },
+      { ...call(40), createdAt: isoLocal(-1, 14, 30) },
+      { ...call(39), createdAt: isoLocal(-1, 14, 0) },
+    ]);
+
+    expect(readQueueState().farmacia.history.map((h) => h.number)).toEqual([41]);
+    expect(readQueueState().farmacia.normalCurrent).toBe(41);
+    expect(readQueueState().farmacia.historyDate).toBe(dayKey(0));
+  });
+
+  it("classifica o retrato pelo dia LOCAL do createdAt, não pelo do UTC", () => {
+    // 00:30 do dia local, expresso em UTC. Para quem está a leste de UTC a
+    // data gravada pertence ao dia anterior, e comparar o prefixo do ISO
+    // descartaria a chamada.
+    const localMorning = new Date();
+    localMorning.setHours(0, 30, 0, 0);
+
+    reconcileQueueFromCalls("farmacia", [
+      { ...call(41), createdAt: localMorning.toISOString() },
+      { ...call(40), createdAt: isoLocal(-1, 12) },
+    ]);
+
+    expect(readQueueState().farmacia.history.map((h) => h.number)).toEqual([41]);
   });
 });

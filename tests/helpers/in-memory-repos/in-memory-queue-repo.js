@@ -5,6 +5,18 @@
 export class InMemoryQueueRepository {
   #sequences = new Map(); // "sector:type" → current_number
   #calls = [];
+  #resetAt = new Map(); // sector → Date
+  #clock = 0;
+
+  /**
+   * Monotonic timestamp source. Guarantees strict ordering between calls and
+   * resets even within the same millisecond, so `created_at >= resetAt`
+   * filtering is deterministic.
+   */
+  #now() {
+    this.#clock = Math.max(Date.now(), this.#clock + 1);
+    return new Date(this.#clock);
+  }
 
   async nextNumber(sector, type) {
     const key = `${sector}:${type}`;
@@ -27,7 +39,7 @@ export class InMemoryQueueRepository {
     this.#calls.push({
       ...call,
       id,
-      created_at: new Date(),
+      created_at: this.#now(),
     });
     return { id };
   }
@@ -38,6 +50,29 @@ export class InMemoryQueueRepository {
         this.#sequences.set(key, -1);
       }
     }
+    this.#resetAt.set(sector, this.#now());
+  }
+
+  async getSectorResetAt(sector) {
+    return this.#resetAt.get(sector) ?? null;
+  }
+
+  async getRecentCalls(sector, limit = 30, resetAt = null) {
+    return this.#calls
+      .filter((c) => c.sector === sector)
+      .filter((c) => !resetAt || c.created_at >= resetAt)
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, limit)
+      .map((c) => ({
+        id: c.id,
+        number: c.number,
+        type: c.sequenceType === "preferencial" ? "preferencial" : "normal",
+        time: new Intl.DateTimeFormat("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(c.created_at),
+        createdAt: new Date(c.created_at).toISOString(),
+      }));
   }
 
   async setNextNumber(sector, type, nextNumber) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { read } from "@/lib/repositories";
+import { requireSession } from "@/lib/api-auth";
 import { MIN_DAYS, MAX_DAYS, DEFAULT_DAYS } from "@/lib/constants.js";
 
 /* ─────────────────────────────────────────────────
@@ -9,8 +10,12 @@ import { MIN_DAYS, MAX_DAYS, DEFAULT_DAYS } from "@/lib/constants.js";
    - sector: filtro por setor ("farmacia"|"recepcao")
    - from: data inicial (YYYY-MM-DD)
    - to: data final (YYYY-MM-DD)
+   Somente `/historico` consome esta rota, e ele é autenticado.
 ───────────────────────────────────────────────── */
 export async function GET(request) {
+  const { error } = await requireSession();
+  if (error) return error;
+
   const url = new URL(request.url);
   const days = Math.min(MAX_DAYS, Math.max(MIN_DAYS, Number(url.searchParams.get("days")) || DEFAULT_DAYS));
   const sector = url.searchParams.get("sector") || null;

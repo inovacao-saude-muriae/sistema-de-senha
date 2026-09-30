@@ -46,3 +46,42 @@ describe("Painel page — audio isolation", () => {
     expect(painelCode).toMatch(/catch[\s\S]*?Erro ao repetir/);
   });
 });
+
+describe("Painel page — retrato x evento", () => {
+  /**
+   * Delimita o effect que chama `reconcileQueueFromCalls`, em vez de partir do
+   * primeiro `useEffect` do arquivo — o span alcançaria a declaração de
+   * `lastCallIdRef` e o effect ao vivo.
+   */
+  function reconcileEffect() {
+    const callAt = painelCode.indexOf("reconcileQueueFromCalls(");
+    if (callAt === -1) return null;
+    const start = painelCode.lastIndexOf("useEffect(", callAt);
+    const end = painelCode.indexOf("]);", callAt);
+    if (start === -1 || end === -1) return null;
+    return painelCode.slice(start, end + "]);".length);
+  }
+
+  it("não busca o histórico por conta própria — vem do singleton", () => {
+    // Era a pendência "fetch duplicado" (TODO removido): o retrato agora é
+    // compartilhado com `useQueueEvents`.
+    expect(painelCode).not.toMatch(/fetch\([^)]*QUEUE_RECENT/);
+    expect(painelCode).not.toMatch(/\/api\/queue\/recent/);
+  });
+
+  it("possui um effect de reconciliação sobre o retrato (calls)", () => {
+    const effect = reconcileEffect();
+    expect(effect).toBeTruthy();
+    expect(effect).toMatch(/HISTORY_LIMIT/);
+    expect(effect).toMatch(/activeSector/);
+    expect(effect).toMatch(/\[calls, activeSector\]/);
+  });
+
+  it("o effect de reconciliação não mexe na dedupe do effect ao vivo", () => {
+    expect(reconcileEffect()).not.toMatch(/lastCallIdRef/);
+  });
+
+  it("o effect ao vivo segue deduplicando por lastCallIdRef", () => {
+    expect(painelCode).toMatch(/lastCallIdRef\.current === callKey/);
+  });
+});

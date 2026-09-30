@@ -30,6 +30,22 @@ export class QueueRepository {
    * @returns {Promise<void>}
    */
   async resetSector(sector) {}
+
+  /**
+   * Get the reset marker for a sector (null when never reset)
+   * @param {'farmacia'|'recepcao'} sector
+   * @returns {Promise<Date|null>}
+   */
+  async getSectorResetAt(sector) {}
+
+  /**
+   * Get recent calls for a sector, optionally excluding pre-reset calls
+   * @param {'farmacia'|'recepcao'} sector
+   * @param {number} limit
+   * @param {Date|null} [resetAt]
+   * @returns {Promise<Array<{id:string, number:number, type:string, time:string}>>}
+   */
+  async getRecentCalls(sector, limit, resetAt) {}
 }
 
 /**
@@ -58,30 +74,18 @@ export class ReadRepository {
 
 /**
  * Auth repository interface
+ *
+ * Credential verification is NOT part of this interface — it lives in
+ * `src/auth.js` (NextAuth), so there is no second, rate-limit-free path to
+ * validate a password.
  */
 export class AuthRepository {
   /**
-   * Resolve login username to email (using admin if configured)
+   * Resolve login username to email
    * @param {string} username
    * @returns {Promise<string>}
    */
   async resolveLoginEmail(username) {}
-
-  /**
-   * Login with username and password
-   * @param {string} login
-   * @param {string} password
-   * @returns {Promise<{
-   *   id: string,
-   *   name: string,
-   *   initials: string,
-   *   role: 'admin'|'attendant',
-   *   sector: 'farmacia'|'recepcao'|null,
-   *   guiche: 'none'|'guiche-1'|'guiche-2'|'guiche-3'|'guiche-4'
-   * }>}
-   * @throws {{ status: number, message: string }} on error (400, 401, 403, 500, 503)
-   */
-  async login(login, password) {}
 }
 
 /**
@@ -160,17 +164,4 @@ export class NewsRepository {
    * @returns {Promise<Array<{id: string, title: string, image: string}>>}
    */
   async listActive() {}
-}
-
-/**
- * Realtime repository interface
- */
-export class RealtimeRepository {
-  /**
-   * Subscribe to queue inserts for a sector
-   * @param {'farmacia'|'recepcao'} sector
-   * @param {(call: { id:string, number:number, type:string, time:string }) => void} callback
-   * @returns {() => void} unsubscribe function
-   */
-  async subscribeToQueue(sector, callback) {}
 }

@@ -18,6 +18,7 @@ import {
   getSessionSnapshot, nextQueueNumber,
   normalizeQueue,
   readQueueState,
+  reconcileQueueFromCalls,
   saveQueueState,
   subscribeQueue,
   subscribeSession,
@@ -67,7 +68,7 @@ export default function PainelPage() {
   const current    = normalizeQueue(state[activeSector]);
   const sectorInfo = SECTORS[activeSector] || SECTORS.farmacia;
 
-  const { lastCall } = useQueueEvents(activeSector);
+  const { calls, lastCall } = useQueueEvents(activeSector);
   const lastCallIdRef = useRef(null);
 
   useEffect(() => {
@@ -75,34 +76,19 @@ export default function PainelPage() {
     if (!storedSession) { router.push("/login"); }
   }, [router]);
 
+  // Reconcile against the server's portrait — `useQueueEvents` now performs the
+  // request this component used to make on its own, so there is no second GET
+  // on mount (the old TODO about duplicated calls).
+  // Idempotent and silent: it never announces, it only makes local state agree
+  // with the server. Empty portrait → `---` (post-reset), which is why this
+  // cannot resurrect a pre-reset password the way the live path could.
   useEffect(() => {
-    if (!activeSector) return;
-    fetch(`${API_ROUTES.QUEUE_RECENT}?sector=${activeSector}&limit=${HISTORY_LIMIT}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data?.calls?.length) return;
-        const latestState = readQueueState();
-        const latest = normalizeQueue(latestState[activeSector]);
-        const calls = data.calls.map((c) => ({
-          number: c.number,
-          type: c.type === CALL_TYPES.PREFERENCIAL || c.type === CALL_TYPES.PREFERENTIAL
-            ? CALL_TYPES.PREFERENCIAL : CALL_TYPES.NORMAL,
-          time: c.time,
-        }));
-        const field = calls[0]?.type === CALL_TYPES.PREFERENCIAL
-          ? TYPE_FIELDS.preferencial : TYPE_FIELDS.normal;
-        saveQueueState({
-          ...latestState,
-          [activeSector]: {
-            ...latest,
-            [field]: calls[0]?.number ?? latest[field],
-            history: calls.slice(0, HISTORY_LIMIT),
-          },
-        });
-      })
-      .catch(() => {});
-  }, [activeSector]);
+    if (!activeSector || calls == null) return;
+    reconcileQueueFromCalls(activeSector, calls, { historyLimit: HISTORY_LIMIT });
+  }, [calls, activeSector]);
 
+  // Live path: only ever reached by a real event, because `lastCall` is cleared
+  // on reset and when the last subscriber leaves.
   useEffect(() => {
     if (!lastCall || !activeSector) return;
     const callKey = `${lastCall.id || lastCall.number}-${lastCall.type}`;
