@@ -40,3 +40,5 @@ src/server/generated
 .claude
 
 docs
+
+scripts/ui-compare
