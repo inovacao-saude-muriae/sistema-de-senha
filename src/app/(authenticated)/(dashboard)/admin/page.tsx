@@ -1,27 +1,11 @@
 'use client';
 
 import type { User } from 'next-auth';
-import type {
-  ApiErrorBody,
-  NewsCreateBody,
-  NewsListBody,
-  QueueSyncBody,
-} from '@/shared/types/api';
-import type { NewsItem } from '@/shared/types/domain';
+import type { ApiErrorBody, QueueSyncBody } from '@/shared/types/api';
 
-import {
-  AlertTriangle,
-  ImageIcon,
-  ImagePlus,
-  Monitor,
-  RotateCcw,
-  Save,
-  Trash2,
-  Trash2Icon,
-} from 'lucide-react';
-import Image from 'next/image';
+import { AlertTriangle, Monitor, RotateCcw, Trash2Icon } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 
 import { AccessSection } from '@/app/(authenticated)/(dashboard)/admin/access-section';
 import {
@@ -30,6 +14,7 @@ import {
   sectionStyle,
   sectionTitleStyle,
 } from '@/app/(authenticated)/(dashboard)/admin/admin-styles';
+import { NewsSection } from '@/app/(authenticated)/(dashboard)/admin/news-section';
 import {
   getQueueSnapshot,
   getServerQueueSnapshot,
@@ -90,16 +75,6 @@ import {
 } from '@/shared/permissions';
 import { formatNumberString, normalizeCallType } from '@/shared/queue-format';
 
-/**
- * Item do carrossel de notícias da tela de administração: o que vem do
- * servidor (`NewsItem`) ou um rascunho ainda não publicado — só esse tem
- * `_file`, o arquivo que `saveNews` envia no `FormData`.
- */
-type AdminNews = NewsItem & { readonly _file?: File };
-
-const newsCache: NewsItem[] = [];
-const serverNewsSnapshot: NewsItem[] = [];
-
 export default function AdminPage() {
   const session = useEffectiveSession();
   const state = useSyncExternalStore(
@@ -107,42 +82,12 @@ export default function AdminPage() {
     getQueueSnapshot,
     getServerQueueSnapshot,
   );
-  const news = useSyncExternalStore(
-    subscribeNews,
-    getNewsSnapshot,
-    getServerNewsSnapshot,
-  );
-
-  const [title, setTitle] = useState('');
-  const [image, setImage] = useState('');
-  const [draftNews, setDraftNews] = useState<AdminNews[]>([]);
-  const [savingNews, setSavingNews] = useState(false);
   const [resettingSector, setResettingSector] = useState<
     Record<string, boolean>
   >({});
   // alvo do reset pendente de confirmação (`"all"` ou o id do setor);
   // null = diálogo fechado
   const [resetPending, setResetPending] = useState<null | string>(null);
-  // alvo da exclusão de notícia pendente de confirmação; null = diálogo fechado
-  const [deleteNewsTarget, setDeleteNewsTarget] = useState<AdminNews | null>(
-    null,
-  );
-  const [, refreshNews] = useState(0);
-  const pendingFileRef = useRef<File | null>(null);
-
-  /* notícias */
-  useEffect(() => {
-    fetch('/api/news')
-      .then((r) => (r.ok ? readJson<NewsListBody>(r) : null))
-      .then((data) => {
-        if (!data?.news) return;
-        newsCache.splice(0, newsCache.length, ...data.news);
-        setDraftNews(data.news);
-        refreshNews((v) => v + 1);
-        window.dispatchEvent(new Event('news-updated'));
-      })
-      .catch(() => {});
-  }, []);
 
   if (!session) return null;
 
@@ -233,101 +178,6 @@ export default function AdminPage() {
         return next;
       });
     }
-  }
-
-  /* ── notícias ── */
-  function addNews(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!title || !pendingFileRef.current) return;
-    setDraftNews([
-      {
-        id: `draft-${Date.now()}`,
-        title,
-        _file: pendingFileRef.current,
-        image,
-      },
-      ...draftNews,
-    ]);
-    setTitle('');
-    setImage('');
-    pendingFileRef.current = null;
-    toast.add({
-      title: "Alteração pendente. Clique em 'Salvar notícias' para publicar.",
-      type: 'info',
-    });
-  }
-
-  async function saveNews() {
-    setSavingNews(true);
-    try {
-      // Remove os que foram deletados do rascunho
-      const removed = news.filter(
-        (item) => !draftNews.some((d) => String(d.id) === String(item.id)),
-      );
-      for (const item of removed) {
-        await fetch(`/api/news?id=${item.id}`, { method: 'DELETE' });
-      }
-
-      // Cria os novos (que têm id começando com "draft-"). O predicado
-      // também garante o arquivo: só rascunho criado em `addNews` tem `_file`,
-      // então na prática nada é pulado — e o TS entrega um `File` para o
-      // `FormData.append`.
-      const created: NewsItem[] = [];
-      for (const item of draftNews.filter(
-        (d): d is AdminNews & { readonly _file: File } =>
-          String(d.id).startsWith('draft-') && d._file !== undefined,
-      )) {
-        const fd = new FormData();
-        fd.append('title', item.title);
-        fd.append('image', item._file);
-        const res = await fetch('/api/news', { body: fd, method: 'POST' });
-        const data = await readJson<NewsCreateBody>(res);
-        if (!res.ok) throw new Error(data.error);
-        created.push(data.news);
-      }
-
-      const res = await fetch('/api/news');
-      const data = await readJson<NewsListBody>(res);
-      if (!res.ok) throw new Error(data.error);
-      newsCache.splice(0, newsCache.length, ...data.news);
-      setDraftNews(data.news);
-      refreshNews((v) => v + 1);
-      window.dispatchEvent(new Event('news-updated'));
-      toast.add({
-        title: `${created.length} notícia(s) salva(s) com sucesso.`,
-        type: 'success',
-      });
-    } catch (error) {
-      toast.add({
-        title: errorMessage(error, 'Não foi possível salvar as notícias.'),
-        type: 'error',
-      });
-    } finally {
-      setSavingNews(false);
-    }
-  }
-
-  /* A exclusão só remove do rascunho: a remoção no servidor acontece ao
-     salvar. O AlertDialog confirma a intenção antes de alterar o rascunho. */
-  function confirmDeleteNews() {
-    const target = deleteNewsTarget;
-    if (!target) return;
-    setDeleteNewsTarget(null);
-    setDraftNews(
-      draftNews.filter((item) => String(item.id) !== String(target.id)),
-    );
-    toast.add({
-      title: "Exclusão pendente. Clique em 'Salvar notícias' para confirmar.",
-      type: 'info',
-    });
-  }
-
-  function readImage(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    pendingFileRef.current = file;
-    // preview local via URL temporária
-    setImage(URL.createObjectURL(file));
   }
 
   return (
@@ -439,94 +289,7 @@ export default function AdminPage() {
 
         {/* ── Notícias do monitor ── */}
         {canManageNews && (
-          <section className={sectionStyle}>
-            <div className={sectionTitleStyle}>
-              <div>
-                <p className={sectionEyebrowStyle}>COMUNICAÇÃO</p>
-                <h2 className={`font-bold ${sectionHeadingStyle}`}>
-                  Notícias do monitor
-                </h2>
-              </div>
-            </div>
-
-            {canCreateNews && (
-              <form
-                className="mt-5 grid grid-cols-1 gap-2.5 lg:grid-cols-[1.3fr_1fr_auto]"
-                onSubmit={addNews}
-              >
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Título da notícia"
-                  className="h-8"
-                  required
-                />
-                <label className="flex h-8 cursor-pointer items-center gap-1.75 rounded-lg border border-input px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent">
-                  {image ? (
-                    <ImageIcon data-icon="inline-start" className="size-4" />
-                  ) : (
-                    <ImagePlus data-icon="inline-start" className="size-4" />
-                  )}
-
-                  {image ? 'Imagem selecionada' : 'Adicionar imagem'}
-
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={readImage}
-                    className="hidden"
-                    required
-                  />
-                </label>
-
-                <Button type="submit">
-                  <ImagePlus data-icon="inline-start" /> Adicionar à lista
-                </Button>
-              </form>
-            )}
-
-            <div className="mt-5 flex flex-wrap gap-3">
-              {draftNews.map((item, i) => (
-                <article
-                  key={`${item.title}-${i}`}
-                  className="w-[150px] overflow-hidden rounded-[7px] border border-[#e1ebee]"
-                >
-                  <Image
-                    src={item.image}
-                    alt=""
-                    width={300}
-                    height={170}
-                    className="h-21.25 w-full object-cover"
-                    unoptimized
-                  />
-                  <strong className="block p-[9px] text-[11px]">
-                    {item.title}
-                  </strong>
-                  {canDeleteNews && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-full justify-center rounded-none border-t border-[#e1ebee] text-destructive hover:bg-[#fdecea] hover:text-destructive"
-                      onClick={() => setDeleteNewsTarget(item)}
-                    >
-                      <Trash2 data-icon="inline-start" /> Excluir
-                    </Button>
-                  )}
-                </article>
-              ))}
-            </div>
-
-            {(canCreateNews || canDeleteNews) && (
-              <Button
-                className="mt-4.5"
-                onClick={() => void saveNews()}
-                disabled={savingNews}
-              >
-                <Save data-icon="inline-start" />{' '}
-                {savingNews ? 'Salvando…' : 'Salvar notícias'}
-              </Button>
-            )}
-          </section>
+          <NewsSection canCreate={canCreateNews} canDelete={canDeleteNews} />
         )}
 
         {/* ── Gerenciamento de usuários e permissões ── */}
@@ -568,41 +331,6 @@ export default function AdminPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-
-        {/* Confirmação de exclusão de notícia — mesmo padrão do reset */}
-        <AlertDialog
-          open={deleteNewsTarget !== null}
-          onOpenChange={(open) => {
-            if (!open) setDeleteNewsTarget(null);
-          }}
-        >
-          <AlertDialogContent size="sm">
-            <AlertDialogHeader>
-              <AlertDialogMedia className="bg-destructive/10 text-destructive">
-                <Trash2Icon />
-              </AlertDialogMedia>
-              <AlertDialogTitle>Excluir esta notícia?</AlertDialogTitle>
-              <AlertDialogDescription className="flex flex-col">
-                A imagem{' '}
-                {deleteNewsTarget ? `"${deleteNewsTarget.title}" ` : null}
-                sairá da lista exibida no monitor.
-                <small className="mt-1">
-                  A exclusão é efetivada ao clicar em &quot;Salvar
-                  notícias&quot;.
-                </small>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => confirmDeleteNews()}
-              >
-                Excluir
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </section>
     </>
   );
@@ -614,24 +342,6 @@ export default function AdminPage() {
 interface SyncSectionProps {
   readonly canSync: boolean;
   readonly session: User;
-}
-
-function getNewsSnapshot(): readonly NewsItem[] {
-  if (typeof window === 'undefined') return serverNewsSnapshot;
-  return newsCache;
-}
-
-function getServerNewsSnapshot(): readonly NewsItem[] {
-  return serverNewsSnapshot;
-}
-
-function subscribeNews(callback: () => void) {
-  window.addEventListener('storage', callback);
-  window.addEventListener('news-updated', callback);
-  return () => {
-    window.removeEventListener('storage', callback);
-    window.removeEventListener('news-updated', callback);
-  };
 }
 
 function SyncSection({ canSync, session }: SyncSectionProps) {

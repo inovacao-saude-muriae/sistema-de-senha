@@ -1,6 +1,7 @@
 import type {
   NewsCreateBody,
   NewsListBody,
+  NewsUpdateBody,
   SuccessBody,
 } from '@/shared/types/api';
 
@@ -12,6 +13,7 @@ import {
   objectExistsInS3,
 } from '@/server/storage/s3-client';
 import { readJson } from '@/shared/json';
+import { makeTestImage } from '../../../helpers/images';
 import {
   cleanupAllNews,
   cleanupTestNews,
@@ -48,13 +50,8 @@ function isUrl(str?: string) {
   return str !== undefined && URL.canParse(str);
 }
 
-function makeImage({
-  name = 'test.jpg',
-  size = 1024,
-  type = 'image/jpeg',
-}: { name?: string; size?: number; type?: string } = {}) {
-  const data = new Uint8Array(size);
-  return new File([data], name, { type });
+function newsUrl(query = '') {
+  return new Request(`http://localhost/api/news${query}`);
 }
 
 describe('/api/news — integration', () => {
@@ -74,13 +71,13 @@ describe('/api/news — integration', () => {
       const repo = await importNewsRepo();
       const result = await repo.create({
         title: 'Notícia GET Teste',
-        image: makeImage({ name: 'get-test.jpg' }),
+        image: makeTestImage({ name: 'get-test.jpg' }),
       });
       createdIds.push(Number(result.news.id));
       createdKeys.push(extractKeyFromUrl(result.news.image));
 
       const { GET } = await importRoute();
-      const res = await GET();
+      const res = await GET(newsUrl());
       const body = await readJson<NewsListBody>(res);
 
       expect(res.status).toBe(200);
@@ -92,23 +89,24 @@ describe('/api/news — integration', () => {
 
       expect(found).toBeDefined();
       expect(found?.title).toBe('Notícia GET Teste');
+      expect(found?.active).toBe(true);
       expect(isUrl(found?.image)).toBe(true);
       expect(found?.image).toMatch(`${String(S3_PUBLIC_URL)}/`);
     });
 
-    it('não retorna notícias inativas', async () => {
+    it('não retorna notícias arquivadas na lista de ativas', async () => {
       const repo = await importNewsRepo();
       const result = await repo.create({
         title: 'Inativa Teste',
-        image: makeImage({ name: 'inativa-test.jpg' }),
+        image: makeTestImage({ name: 'inativa-test.jpg' }),
       });
       createdIds.push(Number(result.news.id));
       createdKeys.push(extractKeyFromUrl(result.news.image));
 
-      await repo.remove(result.news.id);
+      await repo.setActive(result.news.id, false);
 
       const { GET } = await importRoute();
-      const res = await GET();
+      const res = await GET(newsUrl());
       const body = await readJson<NewsListBody>(res);
 
       expect(res.status).toBe(200);
@@ -118,7 +116,53 @@ describe('/api/news — integration', () => {
       expect(found).toBeUndefined();
     });
 
-    it('retorna no máximo 10 notícias', async () => {
+    it('lista arquivadas com status=inactive', async () => {
+      const repo = await importNewsRepo();
+      // O banco de teste pode já ter notícias (seed), então o contador é
+      // conferido em relação à linha de base, não contra zero.
+      const baseline = await repo.list({ status: 'active' });
+      const result = await repo.create({
+        title: 'Arquivada Teste',
+        image: makeTestImage({ name: 'arquivada.jpg' }),
+      });
+      createdIds.push(Number(result.news.id));
+      createdKeys.push(extractKeyFromUrl(result.news.image));
+
+      await repo.setActive(result.news.id, false);
+
+      const { GET } = await importRoute();
+      const res = await GET(newsUrl('?status=inactive'));
+      const body = await readJson<NewsListBody>(res);
+
+      expect(res.status).toBe(200);
+      expect(body.news.map((n) => n.id)).toContain(result.news.id);
+      expect(body.counts.active).toBe(baseline.counts.active);
+      expect(body.counts.inactive).toBeGreaterThanOrEqual(1);
+    });
+
+    it('pagina e devolve total/totalPages', async () => {
+      await cleanupAllNews();
+      for (let i = 0; i < 5; i++) {
+        const { id } = await seedTestNews({ title: `Página ${i}` });
+        createdIds.push(id);
+      }
+
+      const { GET } = await importRoute();
+      const res = await GET(newsUrl('?page=2&pageSize=2'));
+      const body = await readJson<NewsListBody>(res);
+
+      expect(res.status).toBe(200);
+      expect(body.news).toHaveLength(2);
+      expect(body.pagination).toEqual({
+        page: 2,
+        pageSize: 2,
+        total: 5,
+        totalPages: 3,
+      });
+      expect(body.counts.active).toBe(5);
+    });
+
+    it('retorna no máximo 10 notícias por padrão', async () => {
       await cleanupAllNews();
       for (let i = 0; i < 12; i++) {
         const { id } = await seedTestNews({ title: `Max News ${i}` });
@@ -126,11 +170,12 @@ describe('/api/news — integration', () => {
       }
 
       const { GET } = await importRoute();
-      const res = await GET();
+      const res = await GET(newsUrl());
       const body = await readJson<NewsListBody>(res);
 
       expect(res.status).toBe(200);
       expect(body.news).toHaveLength(10);
+      expect(body.pagination.pageSize).toBe(10);
     });
 
     it('retorna notícias ordenadas por created_at desc', async () => {
@@ -146,7 +191,7 @@ describe('/api/news — integration', () => {
       createdIds.push(older.id, newer.id);
 
       const { GET } = await importRoute();
-      const res = await GET();
+      const res = await GET(newsUrl());
       const body = await readJson<NewsListBody>(res);
 
       expect(res.status).toBe(200);
@@ -158,7 +203,7 @@ describe('/api/news — integration', () => {
   describe('POST', () => {
     it('retorna 400 sem título', async () => {
       const form = new FormData();
-      form.append('image', makeImage());
+      form.append('image', makeTestImage());
 
       const { POST } = await importRoute();
       const res = await POST(
@@ -214,7 +259,10 @@ describe('/api/news — integration', () => {
     it('cria notícia, salva no banco e retorna dados', async () => {
       const form = new FormData();
       form.append('title', 'Minha Notícias');
-      form.append('image', makeImage({ name: 'foto.jpg', type: 'image/jpeg' }));
+      form.append(
+        'image',
+        makeTestImage({ name: 'foto.jpg', type: 'image/jpeg' }),
+      );
 
       const { POST } = await importRoute();
       const res = await POST(
@@ -229,6 +277,7 @@ describe('/api/news — integration', () => {
       expect(body.success).toBe(true);
       expect(body.news.title).toBe('Minha Notícias');
       expect(body.news.id).toBeDefined();
+      expect(body.news.active).toBe(true);
       expect(body.news.image).toMatch(
         new RegExp(
           `^${String(S3_PUBLIC_URL).replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`,
@@ -248,7 +297,10 @@ describe('/api/news — integration', () => {
     it('salva a imagem no S3', async () => {
       const form = new FormData();
       form.append('title', 'Com Imagem');
-      form.append('image', makeImage({ name: 'foto.png', type: 'image/png' }));
+      form.append(
+        'image',
+        makeTestImage({ name: 'foto.png', type: 'image/png' }),
+      );
 
       const { POST } = await importRoute();
       const res = await POST(
@@ -273,7 +325,7 @@ describe('/api/news — integration', () => {
     it('faz trim no título', async () => {
       const form = new FormData();
       form.append('title', '  Com Espaços  ');
-      form.append('image', makeImage());
+      form.append('image', makeTestImage());
 
       const { POST } = await importRoute();
       const res = await POST(
@@ -290,72 +342,211 @@ describe('/api/news — integration', () => {
       createdIds.push(Number(body.news.id));
       createdKeys.push(extractKeyFromUrl(body.news.image));
     });
+
+    it('retorna 409 com o limite de ativas cheio', async () => {
+      await cleanupAllNews();
+      for (let i = 0; i < 10; i++) {
+        const { id } = await seedTestNews({ title: `Cheia ${i}` });
+        createdIds.push(id);
+      }
+
+      const form = new FormData();
+      form.append('title', 'Excedente');
+      form.append('image', makeTestImage());
+
+      const { POST } = await importRoute();
+      const res = await POST(
+        new Request('http://localhost/api/news', {
+          body: form,
+          method: 'POST',
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      const body = await readJson<NewsCreateBody>(res);
+      expect(body.error).toMatch(/limite/i);
+    });
+  });
+
+  describe('PATCH', () => {
+    it('arquiva a notícia sem apagar a imagem do S3', async () => {
+      const repo = await importNewsRepo();
+      const result = await repo.create({
+        title: 'Para Arquivar',
+        image: makeTestImage({ name: 'to-archive.jpg' }),
+      });
+      createdIds.push(Number(result.news.id));
+      const key = extractKeyFromUrl(result.news.image);
+      createdKeys.push(key);
+
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: result.news.id, active: false }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await readJson<NewsUpdateBody>(res);
+      expect(body.news.active).toBe(false);
+      expect(await objectExistsInS3(String(key))).toBe(true);
+
+      const inactive = await repo.list({ status: 'inactive' });
+      expect(inactive.items.map((item) => item.id)).toContain(result.news.id);
+    });
+
+    it('reativa uma notícia arquivada', async () => {
+      const repo = await importNewsRepo();
+      const result = await repo.create({
+        title: 'Para Reativar',
+        image: makeTestImage({ name: 'to-restore.jpg' }),
+      });
+      createdIds.push(Number(result.news.id));
+      createdKeys.push(extractKeyFromUrl(result.news.image));
+      await repo.setActive(result.news.id, false);
+
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: result.news.id, active: true }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await readJson<NewsUpdateBody>(res);
+      expect(body.news.active).toBe(true);
+    });
+
+    it('retorna 400 sem id', async () => {
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ active: false }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(400);
+    });
+
+    it('retorna 400 sem active booleano', async () => {
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: 1, active: 'sim' }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(400);
+    });
+
+    it('retorna 404 para notícia inexistente', async () => {
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: 999999, active: false }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    it('retorna 409 ao reativar com o limite cheio', async () => {
+      await cleanupAllNews();
+      const archived = await seedTestNews({
+        title: 'Arquivada',
+        active: false,
+      });
+      createdIds.push(archived.id);
+      for (let i = 0; i < 10; i++) {
+        const { id } = await seedTestNews({ title: `Cheia ${i}` });
+        createdIds.push(id);
+      }
+
+      const { PATCH } = await importRoute();
+      const res = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: archived.id, active: true }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
+      );
+
+      expect(res.status).toBe(409);
+    });
   });
 
   describe('DELETE', () => {
     it('retorna 400 sem id', async () => {
       const { DELETE } = await importRoute();
-      const res = await DELETE(new Request('http://localhost/api/news'));
+      const res = await DELETE(newsUrl());
 
       expect(res.status).toBe(400);
     });
 
     it('retorna 400 com id inválido', async () => {
       const { DELETE } = await importRoute();
-      const res = await DELETE(new Request('http://localhost/api/news?id=abc'));
+      const res = await DELETE(newsUrl('?id=abc'));
 
       expect(res.status).toBe(400);
     });
 
-    it('faz soft delete e retorna success', async () => {
+    it('retorna 409 ao tentar excluir uma notícia ativa', async () => {
       const repo = await importNewsRepo();
       const result = await repo.create({
-        title: 'Para Deletar',
-        image: makeImage({ name: 'to-delete.jpg' }),
+        title: 'Ativa',
+        image: makeTestImage({ name: 'still-active.jpg' }),
       });
       createdIds.push(Number(result.news.id));
       createdKeys.push(extractKeyFromUrl(result.news.image));
 
       const { DELETE } = await importRoute();
-      const res = await DELETE(
-        new Request(`http://localhost/api/news?id=${result.news.id}`),
-      );
+      const res = await DELETE(newsUrl(`?id=${result.news.id}`));
+
+      expect(res.status).toBe(409);
+      const body = await readJson<SuccessBody>(res);
+      expect(body.error).toMatch(/inative/i);
+    });
+
+    it('exclui definitivamente uma notícia arquivada e remove do S3', async () => {
+      const repo = await importNewsRepo();
+      const result = await repo.create({
+        title: 'Para Excluir',
+        image: makeTestImage({ name: 'to-destroy.jpg' }),
+      });
+      createdIds.push(Number(result.news.id));
+      const key = extractKeyFromUrl(result.news.image);
+      createdKeys.push(key);
+
+      await repo.setActive(result.news.id, false);
+
+      const { DELETE } = await importRoute();
+      const res = await DELETE(newsUrl(`?id=${result.news.id}`));
 
       expect(res.status).toBe(200);
       const body = await readJson<SuccessBody>(res);
       expect(body).toEqual({ success: true });
 
-      const list = await repo.listActive();
-      const found = list.find((n) => n.id === result.news.id);
-      expect(found).toBeUndefined();
-    });
-
-    it('remove a imagem do S3 ao deletar', async () => {
-      const repo = await importNewsRepo();
-
-      const result = await repo.create({
-        title: 'Com Imagem',
-        image: makeImage({ name: 'to-delete-img.jpg' }),
-      });
-
-      createdIds.push(Number(result.news.id));
-      const key = extractKeyFromUrl(result.news.image);
-      createdKeys.push(key);
-
-      const { DELETE } = await importRoute();
-      const res = await DELETE(
-        new Request(`http://localhost/api/news?id=${result.news.id}`),
-      );
-
-      expect(res.status).toBe(200);
       expect(await objectExistsInS3(String(key))).toBe(false);
+
+      const inactive = await repo.list({ status: 'inactive' });
+      expect(inactive.items.map((item) => item.id)).not.toContain(
+        result.news.id,
+      );
     });
 
     it('retorna 404 quando notícia não existe', async () => {
       const { DELETE } = await importRoute();
-      const res = await DELETE(
-        new Request('http://localhost/api/news?id=999999'),
-      );
+      const res = await DELETE(newsUrl('?id=999999'));
 
       expect(res.status).toBe(404);
       const body = await readJson<SuccessBody>(res);
@@ -364,12 +555,12 @@ describe('/api/news — integration', () => {
   });
 
   describe('fluxo completo', () => {
-    it('cria, lista e deleta notícia', async () => {
+    it('cria, arquiva, lista inativas e exclui definitivamente', async () => {
       const form = new FormData();
       form.append('title', 'Fluxo Completo');
       form.append(
         'image',
-        makeImage({ name: 'fluxo.jpg', type: 'image/jpeg' }),
+        makeTestImage({ name: 'fluxo.jpg', type: 'image/jpeg' }),
       );
 
       const { POST } = await importRoute();
@@ -385,30 +576,37 @@ describe('/api/news — integration', () => {
       createdIds.push(Number(newsId));
       createdKeys.push(extractKeyFromUrl(postData.news.image));
 
-      const { GET } = await importRoute();
-      const getRes = await GET();
+      const { DELETE, GET, PATCH } = await importRoute();
+
+      const getRes = await GET(newsUrl());
       const getData = await readJson<NewsListBody>(getRes);
       const found = getData.news.find((n: { id: string }) => n.id === newsId);
       expect(found).toBeDefined();
       expect(found?.title).toBe('Fluxo Completo');
 
-      const { DELETE } = await importRoute();
-      const delRes = await DELETE(
-        new Request(`http://localhost/api/news?id=${newsId}`),
+      const archiveRes = await PATCH(
+        new Request('http://localhost/api/news', {
+          body: JSON.stringify({ id: newsId, active: false }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'PATCH',
+        }),
       );
+      expect(archiveRes.status).toBe(200);
+
+      const getActive = await GET(newsUrl());
+      const activeData = await readJson<NewsListBody>(getActive);
+      expect(activeData.news.find((n) => n.id === newsId)).toBeUndefined();
+
+      const getInactive = await GET(newsUrl('?status=inactive'));
+      const inactiveData = await readJson<NewsListBody>(getInactive);
+      expect(inactiveData.news.find((n) => n.id === newsId)).toBeDefined();
+
+      const delRes = await DELETE(newsUrl(`?id=${newsId}`));
       expect(delRes.status).toBe(200);
 
-      const getRes2 = await GET();
-      const getData2 = await readJson<NewsListBody>(getRes2);
-      const notFound = getData2.news.find(
-        (n: { id: string }) => n.id === newsId,
-      );
-      expect(notFound).toBeUndefined();
-
-      const repo = await importNewsRepo();
-      const list = await repo.listActive();
-      const stillActive = list.find((n) => n.id === newsId);
-      expect(stillActive).toBeUndefined();
+      const getInactiveAgain = await GET(newsUrl('?status=inactive'));
+      const inactiveAgain = await readJson<NewsListBody>(getInactiveAgain);
+      expect(inactiveAgain.news.find((n) => n.id === newsId)).toBeUndefined();
     });
   });
 });

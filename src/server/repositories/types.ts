@@ -1,9 +1,10 @@
-import type { CallType, SequenceType } from '@/shared/constants';
+import type { CallType, NewsStatus, SequenceType } from '@/shared/constants';
 import type { Permission, PermissionOverride } from '@/shared/permissions';
 import type {
   CreateRoleInput,
   CreateUserInput,
   NewsItem,
+  NewsPage,
   QueueStats,
   RecentCall,
   RoleRecord,
@@ -71,15 +72,45 @@ export interface CreateNewsInput {
 
 /* ── Read (agregações) ──────────────────────────────────────────── */
 
+/** Filtros da listagem administrativa. */
+export interface ListNewsOptions {
+  /** Página 1-based (default 1, clampada em `totalPages`). */
+  readonly page?: number;
+  /** Itens por página (default `NEWS_PAGE_SIZE`, teto `MAX_PAGE_SIZE`). */
+  readonly pageSize?: number;
+  /** `active` (default) = publicadas no monitor; `inactive` = arquivadas. */
+  readonly status?: NewsStatus;
+}
+
 export interface NewsRepository {
   /** Faz upload da imagem no S3 e grava a notícia (rollback do S3 se o banco falhar). */
   create(data: CreateNewsInput): Promise<{ news: NewsItem; success: true }>;
 
+  /**
+   * Exclusão definitiva: apaga a linha e o objeto do S3.
+   *
+   * @throws 409 se a notícia ainda estiver ativa (é preciso arquivar antes).
+   */
+  destroy(id: number | string): Promise<{ success: true }>;
+
+  /**
+   * Listagem paginada por status, com os contadores das duas abas.
+   *
+   * É a leitura do admin; o monitor continua usando `listActive()`, que tem
+   * o recorte fixo de `NEWS_MAX_ACTIVE`.
+   */
+  list(options?: ListNewsOptions): Promise<NewsPage>;
+
   /** Notícias ativas, mais recentes primeiro. Nunca lança. */
   listActive(): Promise<NewsItem[]>;
 
-  /** Soft delete + remoção da imagem no S3. */
-  remove(id: number | string): Promise<{ success: true }>;
+  /**
+   * Arquiva (`false`) ou reativa (`true`) sem tocar no S3 — a imagem
+   * permanece acessível na aba de inativas.
+   *
+   * @throws 409 ao reativar com `NEWS_MAX_ACTIVE` já publicadas.
+   */
+  setActive(id: number | string, active: boolean): Promise<NewsItem>;
 }
 
 /** Payload aceito por `QueueRepository.saveCall`. */

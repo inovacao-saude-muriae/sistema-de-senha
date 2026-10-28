@@ -1,27 +1,44 @@
 import type {
   CreateNewsInput,
+  ListNewsOptions,
   NewsItem,
   NewsRepository,
 } from '@/server/repositories/types';
+import type { NewsPage } from '@/shared/types/domain';
 import type { NewsSeedInput } from '../../contracts/news-repo.contract';
 
 import { RouteError } from '@/server/http/errors';
+import {
+  NEWS_MAX_ACTIVE,
+  NEWS_PAGE_SIZE,
+  NEWS_STATUSES,
+  NEWS_TITLE_MAX,
+} from '@/shared/constants';
+import {
+  hasValidImageSignature,
+  imageExtensionFor,
+  isAllowedImageType,
+  isValidFileSize,
+  isValidNewsTitle,
+  normalizePage,
+  normalizePageSize,
+} from '@/shared/validation';
 
-/**
- * Allowed image MIME types.
- */
-const ALLOWED_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-]);
+const ACTIVE_LIMIT_MESSAGE = `Limite de ${NEWS_MAX_ACTIVE} notícias ativas atingido. Inative uma notícia antes de publicar ou reativar.`;
 
 /**
  * In-memory implementation of NewsRepository for fast contract testing.
  */
 export class InMemoryNewsRepository implements NewsRepository {
   #news = new Map<number, StoredNews>();
+
+  #activeCount(): number {
+    let count = 0;
+    for (const item of this.#news.values()) {
+      if (item.active) count++;
+    }
+    return count;
+  }
 
   #nextId(): number {
     let max = 0;
@@ -35,9 +52,16 @@ export class InMemoryNewsRepository implements NewsRepository {
     data: CreateNewsInput,
   ): Promise<{ news: NewsItem; success: true }> {
     const { title, image } = data;
+    const trimmedTitle = typeof title === 'string' ? title.trim() : '';
 
-    if (!title || typeof title !== 'string' || !title.trim()) {
+    if (!trimmedTitle) {
       throw new RouteError(400, 'Informe um título.');
+    }
+    if (!isValidNewsTitle(trimmedTitle)) {
+      throw new RouteError(
+        400,
+        `O título deve ter no máximo ${NEWS_TITLE_MAX} caracteres.`,
+      );
     }
 
     if (!image || typeof image === 'string') {
@@ -45,58 +69,106 @@ export class InMemoryNewsRepository implements NewsRepository {
     }
 
     // A partir daqui `image` é `File` (o tipo estreita depois das checagens).
-    if (!ALLOWED_TYPES.has(image.type)) {
-      throw new RouteError(400, 'Formato inválido. Use JPG, PNG, WEBP ou GIF.');
+    if (!isAllowedImageType(image.type)) {
+      throw new RouteError(
+        400,
+        'Formato inválido. Use JPG, PNG, WEBP, GIF ou AVIF.',
+      );
+    }
+    if (!isValidFileSize(image.size)) {
+      throw new RouteError(400, 'Imagem deve ter no máximo 5 MB.');
+    }
+
+    const bytes = new Uint8Array(await image.arrayBuffer());
+    if (!hasValidImageSignature(bytes)) {
+      throw new RouteError(400, 'O arquivo enviado não é uma imagem válida.');
+    }
+
+    if (this.#activeCount() >= NEWS_MAX_ACTIVE) {
+      throw new RouteError(409, ACTIVE_LIMIT_MESSAGE);
+    }
+
+    const ext = imageExtensionFor(image.type);
+    if (!ext) {
+      throw new RouteError(
+        400,
+        'Formato inválido. Use JPG, PNG, WEBP, GIF ou AVIF.',
+      );
     }
 
     const id = this.#nextId();
-    const ext = (image.name.split('.').pop() || 'jpg').toLowerCase();
     const imageUrl = `https://fake.storage/news/${id}.${ext}`;
 
     const item: StoredNews = {
       id,
-      title: title.trim(),
+      title: trimmedTitle,
       active: true,
       created_at: new Date(),
       image_url: imageUrl,
     };
     this.#news.set(id, item);
 
+    return { news: shapeNews(item), success: true };
+  }
+
+  async destroy(id: number | string): Promise<{ success: true }> {
+    const newsId = parseNewsId(id);
+    const item = this.#news.get(newsId);
+    if (!item) {
+      throw new RouteError(404, 'Notícia não encontrada.');
+    }
+    if (item.active) {
+      throw new RouteError(
+        409,
+        'Inative a notícia antes de excluí-la definitivamente.',
+      );
+    }
+
+    this.#news.delete(newsId);
+    return { success: true };
+  }
+
+  async list(options: ListNewsOptions = {}): Promise<NewsPage> {
+    const status = options.status ?? NEWS_STATUSES.ACTIVE;
+    const pageSize = normalizePageSize(options.pageSize, NEWS_PAGE_SIZE);
+    const requestedPage = normalizePage(options.page);
+
+    const counts = {
+      active: this.#activeCount(),
+      inactive: this.#news.size - this.#activeCount(),
+    };
+    const filtered = [...this.#news.values()]
+      .filter((item) =>
+        status === NEWS_STATUSES.ACTIVE ? item.active : !item.active,
+      )
+      .sort(
+        (a, b) =>
+          b.created_at.getTime() - a.created_at.getTime() || b.id - a.id,
+      );
+
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const start = (page - 1) * pageSize;
+
     return {
-      news: {
-        id: String(id),
-        title: item.title,
-        image: imageUrl,
-      },
-      success: true,
+      counts,
+      items: filtered
+        .slice(start, start + pageSize)
+        .map((item) => shapeNews(item)),
+      pagination: { page, pageSize, total, totalPages },
     };
   }
 
   async listActive(): Promise<NewsItem[]> {
     return [...this.#news.values()]
-      .filter((n) => n.active)
-      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
-      .map((n) => ({
-        id: String(n.id),
-        title: n.title,
-        image: n.image_url,
-      }));
-  }
-
-  async remove(id: number | string): Promise<{ success: true }> {
-    // `Number.isInteger` não estreita `string | number`, e o original rejeita
-    // string numérica — checar o tipo antes preserva exatamente esse comportamento.
-    if (typeof id !== 'number' || !Number.isInteger(id) || id < 1) {
-      throw new RouteError(400, 'ID inválido.');
-    }
-
-    const item = this.#news.get(id);
-    if (!item) {
-      throw new RouteError(404, 'Notícia não encontrada.');
-    }
-
-    item.active = false;
-    return { success: true };
+      .filter((item) => item.active)
+      .sort(
+        (a, b) =>
+          b.created_at.getTime() - a.created_at.getTime() || b.id - a.id,
+      )
+      .slice(0, NEWS_MAX_ACTIVE)
+      .map((item) => shapeNews(item));
   }
 
   // --- Private helpers ---
@@ -110,12 +182,27 @@ export class InMemoryNewsRepository implements NewsRepository {
     const item: StoredNews = {
       id,
       title: data.title || `News ${Date.now()}`,
-      active: true,
-      created_at: new Date(),
+      active: data.active ?? true,
+      created_at: data.created_at ?? new Date(),
       image_url: data.image || `https://fake.storage/news/${id}.jpg`,
     };
     this.#news.set(id, item);
     return { id, title: item.title };
+  }
+
+  async setActive(id: number | string, active: boolean): Promise<NewsItem> {
+    const newsId = parseNewsId(id);
+    const item = this.#news.get(newsId);
+    if (!item) {
+      throw new RouteError(404, 'Notícia não encontrada.');
+    }
+
+    if (active && !item.active && this.#activeCount() >= NEWS_MAX_ACTIVE) {
+      throw new RouteError(409, ACTIVE_LIMIT_MESSAGE);
+    }
+
+    item.active = active;
+    return shapeNews(item);
   }
 }
 
@@ -126,4 +213,22 @@ interface StoredNews {
   active: boolean;
   created_at: Date;
   image_url: string;
+}
+
+function parseNewsId(id: number | string): number {
+  const value = Number(id);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RouteError(400, 'ID inválido.');
+  }
+  return value;
+}
+
+function shapeNews(item: StoredNews): NewsItem {
+  return {
+    id: String(item.id),
+    title: item.title,
+    active: item.active,
+    image: item.image_url,
+    createdAt: item.created_at.toISOString(),
+  };
 }

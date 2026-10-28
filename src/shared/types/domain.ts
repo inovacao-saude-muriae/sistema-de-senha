@@ -38,12 +38,37 @@ export interface HistoryCall extends QueueCallRecord {
   readonly sector_id: string;
 }
 
-/* ── Usuários ──────────────────────────────────────────────────── */
+/* ── Notícias ──────────────────────────────────────────────────── */
+
+export interface NewsCounts {
+  readonly active: number;
+  readonly inactive: number;
+}
 
 export interface NewsItem {
   readonly id: string;
   readonly title: string;
+  /** `false` = arquivada (fora do monitor), mas ainda reativável. */
+  readonly active: boolean;
   readonly image: string;
+  /** Instante de criação em ISO-8601 (UTC); `null` em linhas legadas. */
+  readonly createdAt: null | string;
+}
+
+/** Página da listagem administrativa (status + paginação + contadores). */
+export interface NewsPage {
+  readonly counts: NewsCounts;
+  readonly items: NewsItem[];
+  readonly pagination: NewsPagination;
+}
+
+export interface NewsPagination {
+  readonly page: number;
+  readonly pageSize: number;
+  /** Itens que casam o status pedido. */
+  readonly total: number;
+  /** `max(1, ceil(total / pageSize))` — nunca zero, para a UI. */
+  readonly totalPages: number;
 }
 
 /**
@@ -118,7 +143,7 @@ export interface UpdateUserInput {
   readonly sector_id?: null | string;
 }
 
-/* ── Notícias ──────────────────────────────────────────────────── */
+/* ── Usuários ──────────────────────────────────────────────────── */
 
 /**
  * Usuário achatado (cargo/overrides desaninhados) — o formato consumido pela

@@ -1,13 +1,20 @@
 import { afterEach, beforeEach, describe } from 'vitest';
 
 import { newsRepoContract } from '../../contracts/news-repo.contract';
-import { cleanupTestNews, seedTestNews } from '../postgres-setup';
+import {
+  cleanupAllNews,
+  cleanupTestNews,
+  seedTestNews,
+} from '../postgres-setup';
 
 describe('NewsRepository — Postgres integration', () => {
   let seededIds: number[] = [];
 
   beforeEach(async () => {
     seededIds = [];
+    // Isola cada caso: as asserções de contagem/paginação do contrato
+    // dependem de a tabela não ter sobrado linhas dos casos anteriores.
+    await cleanupAllNews();
   });
 
   afterEach(async () => {
