@@ -21,6 +21,7 @@ import {
   speakText,
   unlockSpeech,
 } from '@/client/audio/speech';
+import { subscribeNewsChanged } from '@/client/news/news-events';
 import {
   callNextNumber,
   cleanHistory,
@@ -74,11 +75,26 @@ function getNewsSnapshot() {
   return newsSnapshot;
 }
 
+/**
+ * Busca a lista de ativas e publica o snapshot.
+ *
+ * Chamado no mount e quando o admin avisa (outra aba) que publicou/arquivou
+ * algo — sem isso, o carrossel só mudava ao recarregar a página.
+ */
+function refreshNews() {
+  fetch('/api/news')
+    .then((response) => (response.ok ? readJson<NewsListBody>(response) : null))
+    .then((data) => {
+      if (!data?.news) return;
+      newsSnapshot = data.news;
+      window.dispatchEvent(new Event('news-updated'));
+    })
+    .catch(() => {});
+}
+
 function subscribeNews(cb: () => void) {
-  window.addEventListener('storage', cb);
   window.addEventListener('news-updated', cb);
   return () => {
-    window.removeEventListener('storage', cb);
     window.removeEventListener('news-updated', cb);
   };
 }
@@ -93,14 +109,8 @@ const NewsCarousel = memo(() => {
   const [newsIndex, setNewsIndex] = useState(0);
 
   useEffect(() => {
-    fetch('/api/news')
-      .then((r) => (r.ok ? readJson<NewsListBody>(r) : null))
-      .then((data) => {
-        if (!data?.news?.length) return;
-        newsSnapshot = data.news;
-        window.dispatchEvent(new Event('news-updated'));
-      })
-      .catch(() => {});
+    refreshNews();
+    return subscribeNewsChanged(refreshNews);
   }, []);
 
   useEffect(() => {
@@ -122,7 +132,10 @@ const NewsCarousel = memo(() => {
     );
   }
 
-  const item = news[newsIndex];
+  // A lista pode encolher (inativação em outra aba) antes do próximo tick do
+  // intervalo; o módulo evita índice fora do array.
+  const safeIndex = newsIndex % news.length;
+  const item = news[safeIndex];
   return (
     <>
       {item?.image && (
@@ -139,7 +152,7 @@ const NewsCarousel = memo(() => {
             <i
               key={i}
               className={
-                i === newsIndex
+                i === safeIndex
                   ? 'h-2 w-6 rounded-[5px] bg-[#8fe2d2]'
                   : 'size-2 rounded-[50%] bg-[#ffffff66]'
               }

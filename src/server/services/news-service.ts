@@ -1,7 +1,10 @@
 import 'server-only';
 
-import type { CreateNewsInput } from '@/server/repositories/types';
-import type { NewsItem } from '@/shared/types/domain';
+import type {
+  CreateNewsInput,
+  ListNewsOptions,
+} from '@/server/repositories/types';
+import type { NewsItem, NewsPage } from '@/shared/types/domain';
 
 import { news } from '@/server/repositories';
 
@@ -20,10 +23,23 @@ export function createNews(
   return news.create(data);
 }
 
-export function listNews(): Promise<NewsItem[]> {
+export function deleteNews(id: number | string): Promise<{ success: true }> {
+  return news.destroy(id);
+}
+
+/** Recorte fixo do monitor (10 mais recentes ativas). */
+export function listActiveNews(): Promise<NewsItem[]> {
   return news.listActive();
 }
 
-export function removeNews(id: number | string): Promise<{ success: true }> {
-  return news.remove(id);
+/** Listagem paginada do admin (status + contadores). */
+export function listNews(options?: ListNewsOptions): Promise<NewsPage> {
+  return news.list(options);
+}
+
+export function setNewsActive(
+  id: number | string,
+  active: boolean,
+): Promise<NewsItem> {
+  return news.setActive(id, active);
 }

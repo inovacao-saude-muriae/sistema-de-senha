@@ -206,15 +206,33 @@ export const NEWS_ALLOWED_TYPES = [
 export const NEWS_MAX_FILE_SIZE = 5 * 1024 * 1024;
 export const NEWS_BUCKET = 'news-images';
 export const NEWS_DIR = 'public/news';
+/**
+ * Teto de notícias publicadas no monitor. É regra de negócio: publicar ou
+ * reativar com o limite cheio devolve 409, e a UI abre o gerenciador rápido
+ * de ativas para liberar uma vaga.
+ */
 export const NEWS_MAX_ACTIVE = 10;
+/** Itens por página da lista administrativa (grid de 4 colunas). */
+export const NEWS_PAGE_SIZE = 8;
+/** Título máximo aceito pela API. */
+export const NEWS_TITLE_MAX = 120;
+
+export const NEWS_STATUSES = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+} as const;
+
+export type NewsStatus = (typeof NEWS_STATUSES)[keyof typeof NEWS_STATUSES];
+
+/** Predicado de status para valores vindos da query string. */
+export function isNewsStatus(value: unknown): value is NewsStatus {
+  return value === NEWS_STATUSES.ACTIVE || value === NEWS_STATUSES.INACTIVE;
+}
 
 // ── Locale / Timezone ──
 export const LOCALE = 'pt-BR';
 export const APP_TIMEZONE = 'America/Sao_Paulo';
 export const SERVER_TIME_SYNC_INTERVAL = 60000; // 60s entre sincronizações com servidor
-
-// ── Draft ──
-export const DRAFT_PREFIX = 'draft-';
 
 // ── Speech/TTS ──
 export const TTS_MAX_NUMBER = 1000;

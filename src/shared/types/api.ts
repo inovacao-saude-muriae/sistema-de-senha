@@ -4,7 +4,9 @@ import type { Permission, PermissionOverride } from '@/shared/permissions';
 import type {
   CreateRoleInput,
   CreateUserInput,
+  NewsCounts,
   NewsItem,
+  NewsPagination,
   QueueStats,
   RecentCall,
   RoleRecord,
@@ -81,9 +83,31 @@ export interface NewsCreateBody extends ApiErrorBody {
   readonly success: true;
 }
 
-/** `GET /api/news`. */
+/**
+ * `GET /api/news`.
+ *
+ * Sem query string o default é o do monitor (ativas, página 1, 10 itens);
+ * o admin pede `status`, `page` e `pageSize` explicitamente.
+ */
 export interface NewsListBody extends ApiErrorBody {
+  readonly counts: NewsCounts;
   readonly news: NewsItem[];
+  readonly pagination: NewsPagination;
+}
+
+/**
+ * `PATCH /api/news` — arquiva (`active: false`) ou reativa
+ * (`active: true`). Campos opcionais porque vêm do cliente; a rota valida.
+ */
+export interface NewsPatchBody {
+  readonly id?: unknown;
+  readonly active?: unknown;
+}
+
+/** Resposta de `PATCH /api/news`. */
+export interface NewsUpdateBody extends ApiErrorBody {
+  readonly news: NewsItem;
+  readonly success: true;
 }
 
 /** `POST /api/queue/call`. */
