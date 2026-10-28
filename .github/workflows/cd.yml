@@ -45,7 +45,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger Coolify Webhook
+      - name: Trigger Coolify Webhook (Production Application)
         run: |
           curl -f -X POST "${{ secrets.COOLIFY_WEBHOOK }}" \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
+
+      - name: Trigger Coolify Webhook (Demo Application)
+        run: |
+          curl -f -X POST "${{ secrets.COOLIFY_WEBHOOK_DEMO }}" \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
