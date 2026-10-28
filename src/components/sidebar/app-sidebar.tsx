@@ -35,6 +35,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar';
 import { SECTORS } from '@/shared/constants';
+import { APP_NAME } from '@/shared/page-title';
 import { canAccessSector } from '@/shared/permissions';
 
 /** Busca sem acento/caixa: "hist" e "Histórico" casam. */
@@ -79,9 +80,7 @@ export function AppSidebar({
               </div>
 
               <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-medium">
-                  Sistema de Atendimento por Senhas
-                </span>
+                <span className="font-medium">{APP_NAME}</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

@@ -9,7 +9,8 @@
  */
 
 /** Nome do sistema — sufixo de todos os títulos de aba. */
-export const APP_NAME = 'Sistema de Atendimento por Senhas';
+export const APP_NAME =
+  process.env.NEXT_PUBLIC_APP_NAME ?? 'Sistema de Atendimento por Senhas';
 
 /** Separador entre o nome da tela e o nome do sistema. */
 export const APP_TITLE_SEPARATOR = ' | ';

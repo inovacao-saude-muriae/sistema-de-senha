@@ -65,18 +65,25 @@ const USERS = [
  * Garante a imagem padrão no bucket e devolve a URL pública a ser gravada.
  */
 async function ensureDefaultNewsImage(): Promise<string> {
-  const imageUrl = getPublicUrl(DEFAULT_NEWS.imageKey);
+  try {
+    const imageUrl = getPublicUrl(DEFAULT_NEWS.imageKey);
 
-  if (await objectExistsInS3(DEFAULT_NEWS.imageKey)) {
-    console.log('  ✓ Imagem padrão já existe no S3');
+    if (await objectExistsInS3(DEFAULT_NEWS.imageKey)) {
+      console.log('  ✓ Imagem padrão já existe no S3');
+      return imageUrl;
+    }
+
+    const buffer = await readFile(DEFAULT_NEWS.filePath);
+    await uploadToS3(DEFAULT_NEWS.imageKey, buffer, DEFAULT_NEWS.contentType);
+    console.log('  ✓ Imagem padrão enviada ao S3');
+
     return imageUrl;
+  } catch (_) {
+    console.warn(
+      '  ⚠️ Não foi possível integrar a imagem com o S3 (verifique bucket/permissões). Usando URL de fallback.',
+    );
+    return DEFAULT_NEWS.legacyImageUrl;
   }
-
-  const buffer = await readFile(DEFAULT_NEWS.filePath);
-  await uploadToS3(DEFAULT_NEWS.imageKey, buffer, DEFAULT_NEWS.contentType);
-  console.log('  ✓ Imagem padrão enviada ao S3');
-
-  return imageUrl;
 }
 
 async function main() {
